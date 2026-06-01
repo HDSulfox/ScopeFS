@@ -1,0 +1,5 @@
+format
+login root root
+crash after journal.commit
+mkdir /should_exist
+exit

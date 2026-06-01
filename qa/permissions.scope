@@ -1,0 +1,22 @@
+format
+login usr1 usr1
+create note
+open note rw
+write 3 private data
+close 3
+logout
+login usr2 usr2
+open /home/usr1/note r
+logout
+login root root
+acl grant /home/usr1 usr2 x path_prefix=/home/usr1
+acl grant /home/usr1/note usr2 r path_prefix=/home/usr1
+logout
+login usr2 usr2
+open /home/usr1/note r
+read 3 64
+class create readers
+class grant readers to usr2 with grant option path_prefix=/home/usr1
+class list
+fsck
+exit

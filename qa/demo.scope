@@ -1,0 +1,22 @@
+format
+login root root
+scope
+dir /
+mkdir /course
+mkdir /course/lab
+create /course/lab/report 0644
+open /course/lab/report rw
+write 3 ScopeFS traceable kernel model
+close 3
+snapshot create baseline
+clone /course/lab/report /course/lab/report.clone
+open /course/lab/report.clone append
+write 4  + COW branch
+close 4
+snapshot create after_clone
+snapshot diff baseline after_clone
+scope tree
+map refcount
+trace show 18
+fsck
+exit

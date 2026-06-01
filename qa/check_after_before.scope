@@ -1,0 +1,4 @@
+login root root
+dir /
+fsck
+exit

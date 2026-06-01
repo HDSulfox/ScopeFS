@@ -1,0 +1,5 @@
+login root root
+dir /
+fsck
+trace show 12
+exit
