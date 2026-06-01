@@ -12,6 +12,7 @@ add_executable(scopefs
   src/block_device.cpp
   src/kernel.cpp
   src/shell.cpp
+  src/terminal.cpp
 )
 
 target_include_directories(scopefs PRIVATE include)
@@ -21,6 +22,7 @@ if (MSVC)
 else()
   target_compile_options(scopefs PRIVATE -Wall -Wextra -Wpedantic)
   if (MINGW)
+    target_compile_options(scopefs PRIVATE -finput-charset=UTF-8 -fexec-charset=UTF-8)
     target_link_options(scopefs PRIVATE -static -static-libgcc -static-libstdc++)
   endif()
 endif()

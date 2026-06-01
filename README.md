@@ -23,6 +23,8 @@ The MinGW build links libgcc/libstdc++ statically so the executable is portable 
 Get-Content qa\demo.scope | .\build\scopefs.exe --script
 ```
 
+Interactive mode enables Windows UTF-8 and ANSI Virtual Terminal support at startup, then clears the screen and renders a dark Unicode workbench. Windows Terminal is recommended. If an older console still shows garbled block characters, run `chcp 65001` once before launching.
+
 Default users after `format`:
 
 - `root` / `root`

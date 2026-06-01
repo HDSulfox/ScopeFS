@@ -57,8 +57,8 @@ std::vector<std::string> tokenize(const std::string& line) {
 
 Shell::Shell(FileSystemKernel& kernel) : kernel_(kernel) {}
 
-int Shell::run(std::istream& in, std::ostream& out, bool interactive) {
-  if (interactive) banner(out);
+int Shell::run(std::istream& in, std::ostream& out, bool interactive, const TerminalCaps& caps) {
+  if (interactive) banner(out, caps);
   std::string line;
   while (true) {
     if (interactive) {
@@ -88,19 +88,33 @@ int Shell::run(std::istream& in, std::ostream& out, bool interactive) {
   return 0;
 }
 
-void Shell::banner(std::ostream& out) const {
-  out << "\x1b[38;2;210;210;210m";
-  out << "  ███████╗ ██████╗ ██████╗ ██████╗ ███████╗███████╗███████╗\n";
-  out << "  ██╔════╝██╔════╝██╔═══██╗██╔══██╗██╔════╝██╔════╝██╔════╝\n";
-  out << "  ███████╗██║     ██║   ██║██████╔╝█████╗  █████╗  ███████╗\n";
-  out << "  ╚════██║██║     ██║   ██║██╔═══╝ ██╔══╝  ██╔══╝  ╚════██║\n";
-  out << "  ███████║╚██████╗╚██████╔╝██║     ███████╗██║     ███████║\n";
-  out << "  ╚══════╝ ╚═════╝ ╚═════╝ ╚═╝     ╚══════╝╚═╝     ╚══════╝\n";
-  out << "\x1b[0m";
-  out << "╭────────────────────────────────────────────────────────────╮\n";
-  out << "│ traceable C++17 teaching file system kernel                │\n";
-  out << "│ type help, format, login root root                         │\n";
-  out << "╰────────────────────────────────────────────────────────────╯\n";
+void Shell::banner(std::ostream& out, const TerminalCaps& caps) const {
+  clearInteractiveScreen(out, caps);
+  if (caps.ansi) {
+    out << "\x1b[48;2;18;18;20m\x1b[38;2;224;224;224m";
+  }
+  out << "                                                                                \n";
+  out << "        ███████╗ ██████╗ ██████╗ ██████╗ ███████╗███████╗███████╗             \n";
+  out << "        ██╔════╝██╔════╝██╔═══██╗██╔══██╗██╔════╝██╔════╝██╔════╝             \n";
+  out << "        ███████╗██║     ██║   ██║██████╔╝█████╗  █████╗  ███████╗             \n";
+  out << "        ╚════██║██║     ██║   ██║██╔═══╝ ██╔══╝  ██╔══╝  ╚════██║             \n";
+  out << "        ███████║╚██████╗╚██████╔╝██║     ███████╗██║     ███████║             \n";
+  out << "        ╚══════╝ ╚═════╝ ╚═════╝ ╚═╝     ╚══════╝╚═╝     ╚══════╝             \n";
+  out << "                                                                                \n";
+  if (caps.ansi) {
+    out << "\x1b[48;2;35;35;38m\x1b[38;2;235;235;235m";
+  }
+  out << "  ╭─ ScopeFS Workbench ─────────────────────────────────────────────────────╮  \n";
+  out << "  │  observable C++17 teaching file system: inode · journal · COW · ACL     │  \n";
+  out << "  │  try: format  →  login root root  →  qa/demo.scope in --script mode     │  \n";
+  out << "  ╰─────────────────────────────────────────────────────────────────────────╯  \n";
+  if (caps.ansi) {
+    out << "\x1b[48;2;24;24;26m\x1b[38;2;190;190;190m";
+  }
+  out << "                                                                                \n";
+  out << "  command input is below; outputs render as Unicode panels and heatmaps.        \n";
+  out << "                                                                                \n";
+  if (caps.ansi) out << "\x1b[0m";
 }
 
 std::string Shell::readPassword() {
