@@ -729,7 +729,7 @@ std::string renderReadData(const Theme& th, const TerminalMetrics& metrics, cons
   const auto advanced = newOffset >= oldOffset ? newOffset - oldOffset : 0;
   std::string ruler(dataWidth, ' ');
   for (int i = 0; i < dataWidth; i += 8) {
-    const auto tick = std::to_string(i);
+    const auto tick = std::to_string(oldOffset + static_cast<std::uint64_t>(i));
     for (std::size_t j = 0; j < tick.size() && i + static_cast<int>(j) < dataWidth; ++j) ruler[i + j] = tick[j];
   }
   std::string pointer(dataWidth, ' ');
