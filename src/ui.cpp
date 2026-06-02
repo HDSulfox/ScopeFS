@@ -85,6 +85,94 @@ std::string blockTone(const MapCell& cell) {
   return "dim";
 }
 
+std::string layoutGlyph(const MapCell& cell) {
+  if (cell.flags == "super") return "S";
+  if (cell.flags == "refcount") return "R";
+  if (cell.flags == "inode") return "I";
+  if (cell.flags == "journal") return "J";
+  if (cell.flags == "snapshot") return "P";
+  if (cell.flags == "user") return "U";
+  if (cell.refcount) return "D";
+  return ".";
+}
+
+std::string ownerGlyph(std::uint32_t ownerInode) {
+  if (ownerInode == 0) return ".";
+  constexpr char digits[] = "0123456789abcdef";
+  return std::string(1, digits[ownerInode % 16]);
+}
+
+std::string txGlyph(std::uint64_t txid) {
+  if (txid == 0) return ".";
+  constexpr char digits[] = "0123456789abcdef";
+  return std::string(1, digits[txid % 16]);
+}
+
+std::string mapGlyph(const std::string& what, const MapCell& cell) {
+  if (what == "blocks") return layoutGlyph(cell);
+  if (what == "inode") {
+    if (cell.flags == "inode") return "I";
+    if (cell.flags == "data" && cell.ownerInode != 0) return ownerGlyph(cell.ownerInode);
+    if (cell.refcount > 1) return "*";
+    return ".";
+  }
+  if (what == "journal") {
+    if (cell.flags == "journal") return "J";
+    if (cell.lastWriterTxid != 0) return txGlyph(cell.lastWriterTxid);
+    if (cell.flags == "super") return "S";
+    return ".";
+  }
+  if (what == "owner") return ownerGlyph(cell.ownerInode);
+  return blockGlyph(cell.refcount);
+}
+
+std::string mapTone(const Theme& th, const std::string& what, const MapCell& cell) {
+  (void)th;
+  if (what == "blocks") return blockTone(cell);
+  if (what == "inode") {
+    if (cell.flags == "inode") return "blue";
+    if (cell.refcount > 1) return "magenta";
+    if (cell.ownerInode != 0) return "amber";
+    return "dim";
+  }
+  if (what == "journal") {
+    if (cell.flags == "journal") return "green";
+    if (cell.lastWriterTxid != 0) return "amber";
+    if (cell.flags == "super") return "white";
+    return "dim";
+  }
+  if (what == "owner") {
+    if (cell.refcount > 1) return "magenta";
+    return cell.ownerInode ? "amber" : "dim";
+  }
+  return blockTone(cell);
+}
+
+std::string mapLegend(const Theme& th, const std::string& what) {
+  if (what == "blocks") {
+    return color(th, th.dim, "legend ") + color(th, th.white, "S super ") +
+           color(th, th.amber, "R refmeta ") + color(th, th.blue, "I inode ") +
+           color(th, th.green, "J journal ") + color(th, th.magenta, "P snapshot ") +
+           color(th, th.gray, "U users D data . free");
+  }
+  if (what == "inode") {
+    return color(th, th.dim, "legend ") + color(th, th.blue, "I inode-table ") +
+           color(th, th.amber, "0-f owner-inode data ") + color(th, th.magenta, "* shared ") +
+           color(th, th.gray, ". unrelated/free");
+  }
+  if (what == "journal") {
+    return color(th, th.dim, "legend ") + color(th, th.green, "J journal-reserved ") +
+           color(th, th.amber, "0-f last-writer tx ") + color(th, th.white, "S super ") +
+           color(th, th.gray, ". no journal signal");
+  }
+  if (what == "owner") {
+    return color(th, th.dim, "legend ") + color(th, th.amber, "0-f owner inode modulo 16 ") +
+           color(th, th.magenta, "shared highlighted ") + color(th, th.gray, ". no owner");
+  }
+  return color(th, th.dim, "legend ") + color(th, th.gray, ". free ") +
+         color(th, th.white, "░ allocated ") + color(th, th.magenta, "▒/█ shared");
+}
+
 std::string repeatText(const std::string& text, int count) {
   std::string out;
   for (int i = 0; i < count; ++i) out += text;
@@ -461,47 +549,46 @@ std::string renderMap(const Theme& th, const TerminalMetrics& metrics, const std
   const int stride = std::max<int>(1, static_cast<int>(totalBlocks) / totalCells);
   std::map<std::uint32_t, MapCell> byBlock;
   for (const auto& c : cells) byBlock[c.block] = c;
-  std::vector<std::string> lines;
-  lines.push_back(color(th, th.dim, "0") + std::string(std::max(0, mapWidth - 12), ' ') + color(th, th.dim, std::to_string(totalBlocks)));
-  for (int r = 0; r < rows; ++r) {
-    std::string row;
-    for (int c = 0; c < mapWidth; ++c) {
-      const auto block = static_cast<std::uint32_t>((r * mapWidth + c) * stride);
-      const auto it = byBlock.find(block);
-      MapCell cell;
-      if (it != byBlock.end()) cell = it->second;
-      else cell.block = block;
-      if (what == "blocks" || what == "inode" || what == "journal") {
-        std::string glyph = "·";
-        if (cell.flags == "super") glyph = "S";
-        else if (cell.flags == "refcount") glyph = "R";
-        else if (cell.flags == "inode") glyph = "I";
-        else if (cell.flags == "journal") glyph = "J";
-        else if (cell.flags == "snapshot") glyph = "P";
-        else if (cell.flags == "user") glyph = "U";
-        else if (cell.refcount) glyph = "D";
-        row += color(th, toneCode(th, blockTone(cell)), glyph);
-      } else if (what == "owner") {
-        const std::string glyph = cell.ownerInode ? std::string(1, static_cast<char>('A' + (cell.ownerInode % 26))) : "·";
-        row += color(th, toneCode(th, blockTone(cell)), glyph);
-      } else {
-        row += color(th, toneCode(th, blockTone(cell)), blockGlyph(cell.refcount));
+  {
+    std::vector<std::string> rendered;
+    rendered.push_back(color(th, th.dim, "0") + std::string(std::max(0, mapWidth - 12), ' ') + color(th, th.dim, std::to_string(totalBlocks)));
+    for (int r = 0; r < rows; ++r) {
+      std::string row;
+      for (int c = 0; c < mapWidth; ++c) {
+        const auto block = static_cast<std::uint32_t>((r * mapWidth + c) * stride);
+        const auto it = byBlock.find(block);
+        MapCell cell;
+        if (it != byBlock.end()) cell = it->second;
+        else cell.block = block;
+        row += color(th, toneCode(th, mapTone(th, what, cell)), mapGlyph(what, cell));
       }
+      rendered.push_back(row);
     }
-    lines.push_back(row);
+    rendered.push_back(mapLegend(th, what));
+
+    std::vector<std::string> highlights;
+    if (what == "journal") {
+      for (const auto& c : cells) {
+        if (c.lastWriterTxid == 0) continue;
+        highlights.push_back("block " + color(th, th.amber, std::to_string(c.block)) +
+                             " tx=" + std::to_string(c.lastWriterTxid) +
+                             " owner=#" + std::to_string(c.ownerInode));
+        if (highlights.size() >= 4) break;
+      }
+      if (!highlights.empty()) rendered.push_back(color(th, th.amber, "tx-written blocks"));
+    } else {
+      for (const auto& c : cells) {
+        if (c.refcount <= 1) continue;
+        highlights.push_back("block " + color(th, th.magenta, std::to_string(c.block)) +
+                             " ref=" + std::to_string(c.refcount) +
+                             " owner=#" + std::to_string(c.ownerInode));
+        if (highlights.size() >= 4) break;
+      }
+      if (!highlights.empty()) rendered.push_back(color(th, th.magenta, "shared hotspots"));
+    }
+    rendered.insert(rendered.end(), highlights.begin(), highlights.end());
+    return box(th, "Disk map / " + what, rendered, width, what == "journal" ? "green" : (what == "inode" ? "blue" : "amber")) + "\n";
   }
-  lines.push_back(color(th, th.dim, "legend ") + color(th, th.amber, "R refcount ") + color(th, th.blue, "I inode ") +
-                  color(th, th.green, "J journal ") + color(th, th.magenta, "▒█ shared ") + color(th, th.gray, "░ allocated · free"));
-  std::vector<std::string> hot;
-  for (const auto& c : cells) {
-    if (c.refcount > 1) hot.push_back("block " + color(th, th.magenta, std::to_string(c.block)) + " ref=" + std::to_string(c.refcount) + " owner=#" + std::to_string(c.ownerInode));
-    if (hot.size() >= 4) break;
-  }
-  if (!hot.empty()) {
-    lines.push_back(color(th, th.magenta, "shared hotspots"));
-    lines.insert(lines.end(), hot.begin(), hot.end());
-  }
-  return box(th, "Disk map / " + what, lines, width, "amber") + "\n";
 }
 
 std::string renderTraceTimeline(const Theme& th, const TerminalMetrics& metrics, const std::vector<TraceEvent>& events, const std::string& title) {

@@ -82,6 +82,7 @@ struct MapCell {
   std::uint32_t block = 0;
   std::uint32_t refcount = 0;
   std::uint32_t ownerInode = 0;
+  std::uint64_t lastWriterTxid = 0;
   std::string flags;
 };
 

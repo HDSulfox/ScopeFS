@@ -61,7 +61,12 @@ std::string blockFlagsForId(std::uint32_t block) {
   return "data";
 }
 
-std::string layoutGlyph(std::uint32_t block) {
+std::string hexDigit(std::uint64_t value) {
+  constexpr char digits[] = "0123456789abcdef";
+  return std::string(1, digits[value % 16]);
+}
+
+std::string plainLayoutGlyph(std::uint32_t block, const BlockInfo* info) {
   const auto f = blockFlagsForId(block);
   if (f == "super") return "S";
   if (f == "refcount") return "R";
@@ -69,7 +74,42 @@ std::string layoutGlyph(std::uint32_t block) {
   if (f == "journal") return "J";
   if (f == "snapshot") return "P";
   if (f == "user") return "U";
-  return "·";
+  if (info && info->refcount > 0) return "D";
+  return ".";
+}
+
+std::string plainMapGlyph(const std::string& what, std::uint32_t block, const BlockInfo* info) {
+  if (what == "blocks") return plainLayoutGlyph(block, info);
+  if (what == "inode") {
+    const auto f = blockFlagsForId(block);
+    if (f == "inode") return "I";
+    if (info && info->ownerInode != 0) return hexDigit(info->ownerInode);
+    if (info && info->refcount > 1) return "*";
+    return ".";
+  }
+  if (what == "journal") {
+    const auto f = blockFlagsForId(block);
+    if (f == "journal") return "J";
+    if (info && info->lastWriterTxid != 0) return hexDigit(info->lastWriterTxid);
+    if (f == "super") return "S";
+    return ".";
+  }
+  if (what == "owner") {
+    if (info && info->ownerInode != 0) return hexDigit(info->ownerInode);
+    return ".";
+  }
+  if (!info || info->refcount == 0) return ".";
+  if (info->refcount == 1) return "1";
+  if (info->refcount == 2) return "2";
+  return "#";
+}
+
+std::string plainMapLegend(const std::string& what) {
+  if (what == "blocks") return "legend: S super R refmeta I inode J journal P snapshot U users D data . free";
+  if (what == "inode") return "legend: I inode-table 0-f owner-inode data * shared . unrelated/free";
+  if (what == "journal") return "legend: J journal-reserved 0-f last-writer tx S super . no journal signal";
+  if (what == "owner") return "legend: 0-f owner inode modulo 16 . no owner";
+  return "legend: . free 1 ref=1 2 ref=2 # ref>2";
 }
 
 } // namespace
@@ -1347,7 +1387,12 @@ CommandResult FileSystemKernel::cmdScope(const std::vector<std::string>& args) {
 }
 
 CommandResult FileSystemKernel::cmdMap(const std::vector<std::string>& args) {
-  return ok(renderMap(args.size() >= 2 ? lower(args[1]) : "blocks"));
+  auto what = args.size() >= 2 ? lower(args[1]) : "blocks";
+  if (what == "recount") what = "refcount";
+  if (what != "blocks" && what != "inode" && what != "journal" && what != "refcount" && what != "owner") {
+    return err(ErrorCode::InvalidArgument, "usage: map [blocks|inode|journal|refcount|owner]");
+  }
+  return ok(renderMap(what));
 }
 
 CommandResult FileSystemKernel::cmdSnapshot(const std::vector<std::string>& args) {
@@ -1953,6 +1998,7 @@ std::string FileSystemKernel::renderMap(const std::string& what) const {
       cell.block = id;
       cell.refcount = block.refcount;
       cell.ownerInode = block.ownerInode;
+      cell.lastWriterTxid = block.lastWriterTxid;
       cell.flags = block.flags;
       cells.push_back(cell);
     }
@@ -1964,29 +2010,19 @@ std::string FileSystemKernel::renderMap(const std::string& what) const {
   const std::uint32_t rows = 24;
   const std::uint32_t total = width * rows;
   const std::uint32_t stride = std::max<std::uint32_t>(1, config::kTotalBlocks / total);
-  for (std::uint32_t r = 0; r < rows; ++r) {
-    for (std::uint32_t c = 0; c < width; ++c) {
-      const auto b = (r * width + c) * stride;
-      auto it = state_.blocks.find(b);
-      if (what == "journal" || what == "inode" || what == "blocks") {
-        out << layoutGlyph(b);
-      } else if (what == "refcount") {
-        if (it == state_.blocks.end()) out << "·";
-        else if (it->second.refcount == 0) out << "·";
-        else if (it->second.refcount == 1) out << "░";
-        else if (it->second.refcount == 2) out << "▒";
-        else out << "█";
-      } else if (what == "owner") {
-        if (it == state_.blocks.end() || it->second.ownerInode == 0) out << "·";
-        else out << static_cast<char>('A' + (it->second.ownerInode % 26));
-      } else {
-        out << (it == state_.blocks.end() ? "·" : "▓");
+  {
+    for (std::uint32_t r = 0; r < rows; ++r) {
+      for (std::uint32_t c = 0; c < width; ++c) {
+        const auto b = (r * width + c) * stride;
+        auto it = state_.blocks.find(b);
+        const BlockInfo* info = it == state_.blocks.end() ? nullptr : &it->second;
+        out << plainMapGlyph(what, b, info);
       }
+      out << "\n";
     }
-    out << "\n";
+    out << plainMapLegend(what) << "\n";
+    return out.str();
   }
-  out << "legend: S super R refcount I inode J journal P snapshot U users · free/data ░▒█ refcount\n";
-  return out.str();
 }
 
 std::string FileSystemKernel::fsck(bool repair, bool light) {
