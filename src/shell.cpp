@@ -290,10 +290,18 @@ std::string Shell::readInteractiveLine(std::ostream& out, const TerminalCaps& ca
         if (cursor < line.size()) line.erase(cursor, 1);
         break;
       case EditorKey::Left:
-        if (cursor > 0) --cursor;
+        if (cursor > 0) {
+          const auto oldCursor = cursor;
+          --cursor;
+          if (moveInteractiveCursor(out, line, oldCursor, cursor)) redraw = false;
+        }
         break;
       case EditorKey::Right:
-        if (cursor < line.size()) ++cursor;
+        if (cursor < line.size()) {
+          const auto oldCursor = cursor;
+          ++cursor;
+          if (moveInteractiveCursor(out, line, oldCursor, cursor)) redraw = false;
+        }
         break;
       case EditorKey::Up:
         if (!history_.empty() && historyIndex > 0) {
@@ -370,10 +378,42 @@ void Shell::redrawInteractiveLine(std::ostream& out, const std::string& line, st
   }
 
   const auto prefix = th.panel2 + th.blue + "▌" + th.amber + leftInfo + th.dim + midPadded + th.white + " › ";
-  out << "\r\x1b[2K" << std::string(left, ' ') << prefix << visible
+  out << "\r" << std::string(left, ' ') << prefix << visible
       << std::string(std::max(0, available - commandWidth), ' ') << th.reset << "\r";
   if (cursorColumn > 0) out << "\x1b[" << cursorColumn << "C";
   out.flush();
+}
+
+bool Shell::moveInteractiveCursor(std::ostream& out, const std::string& line, std::size_t oldCursor, std::size_t newCursor) const {
+  const auto metrics = ui::detectMetrics();
+  const auto status = kernel_.status();
+  const auto th = ui::theme(kernel_.uiAnsiEnabled(), kernel_.uiThemeName());
+  if (!th.ansi || th.mono) return false;
+
+  const int width = std::min(metrics.columns, metrics.compact ? metrics.columns : 112);
+  const int left = std::max(0, (metrics.columns - width) / 2);
+  const auto leftInfo = " " + ui::truncate(status.cwd, std::max(12, width / 3)) + " ";
+  const auto mid = status.user + "  tx#" + std::to_string(status.txid);
+  const auto midPadded = ui::padRight(mid, std::max(16, width / 4));
+  const std::string plainPrefix = "▌" + leftInfo + midPadded + " › ";
+  const int prefixWidth = ui::displayWidth(plainPrefix);
+  const int available = std::max(4, width - prefixWidth);
+  const auto visibleStartFor = [&](std::size_t cursor) {
+    std::size_t visibleStart = 0;
+    if (cursor > static_cast<std::size_t>(available)) visibleStart = cursor - static_cast<std::size_t>(available);
+    return std::min(visibleStart, line.size());
+  };
+
+  const auto oldStart = visibleStartFor(oldCursor);
+  const auto newStart = visibleStartFor(newCursor);
+  if (oldStart != newStart) return false;
+
+  const auto beforeCursor = line.substr(newStart, newCursor - newStart);
+  const int cursorColumn = left + prefixWidth + ui::displayWidth(beforeCursor);
+  out << "\r";
+  if (cursorColumn > 0) out << "\x1b[" << cursorColumn << "C";
+  out.flush();
+  return true;
 }
 
 std::vector<std::string> Shell::completionCandidates(const std::string& line, std::size_t cursor, std::size_t* tokenStart) const {
