@@ -45,4 +45,9 @@ if ($after -notmatch "should_exist") {
   throw "committed mkdir was not recovered"
 }
 
+powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "concurrent_locks.ps1")
+if ($LASTEXITCODE -ne 0) {
+  throw "concurrent_locks.ps1 failed with exit code $LASTEXITCODE"
+}
+
 Write-Host "All ScopeFS QA scripts passed."

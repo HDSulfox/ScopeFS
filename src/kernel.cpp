@@ -1,12 +1,14 @@
 #include "scopefs/kernel.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <queue>
 #include <sstream>
+#include <thread>
 
 #include "scopefs/config.hpp"
 #include "scopefs/util.hpp"
@@ -154,11 +156,19 @@ MountState mountStateFromString(const std::string& value) {
   return MountState::Clean;
 }
 
-FileSystemKernel::FileSystemKernel() : device_(trace_) {}
+FileSystemKernel::FileSystemKernel() : device_(trace_), coordinator_(trace_) {}
 
 TraceSink& FileSystemKernel::trace() { return trace_; }
 
 bool FileSystemKernel::isMounted() const { return mounted_; }
+
+void FileSystemKernel::checkExternalCrashSignal() {
+  std::string reason;
+  if (!coordinator_.hasPendingCrashSignal(&reason)) return;
+  coordinator_.markAbnormalExit();
+  trace_.emit(0, "coord.signal.crash", "signal", "-", reason, "external crash signal", "crash");
+  throw CrashException("signal:" + reason);
+}
 
 std::string FileSystemKernel::currentUser() const {
   return activeUser_.empty() ? "-" : activeUser_;
@@ -269,6 +279,7 @@ std::string FileSystemKernel::usage(const std::string& spec) const {
       {"<name>", "<名称>"},
       {"<src>", "<源>"},
       {"<dst>", "<目标>"},
+      {"<ms>", "<毫秒>"},
       {"<seq>", "<序号>"},
       {"<a>", "<a>"},
       {"<b>", "<b>"}};
@@ -288,7 +299,7 @@ std::string FileSystemKernel::msg(const std::string& en, const std::string& zh) 
 
 bool FileSystemKernel::requiresLogin(const std::string& command) const {
   static const std::set<std::string> allowed = {
-      "help", "exit", "format", "login", "trace", "theme", "lang"};
+      "help", "exit", "format", "login", "trace", "theme", "lang", "lock", "sleep"};
   if (allowed.count(command)) return false;
   return true;
 }
@@ -308,6 +319,7 @@ UserSession& FileSystemKernel::session() { return sessions_.at(activeUser_); }
 const UserSession& FileSystemKernel::session() const { return sessions_.at(activeUser_); }
 
 void FileSystemKernel::boot() {
+  coordinator_.startSession();
   device_.ensureWorkspace();
   if (!device_.volumeExists()) {
     trace_.emit(0, "mount.missing", "volume", "-", device_.volumePath(), "volume not found", "need_format");
@@ -317,41 +329,72 @@ void FileSystemKernel::boot() {
   deserializeState(device_.readAll());
   mounted_ = true;
   recoverIfNeeded();
-  setMountState(MountState::Dirty);
-  saveState();
+  {
+    auto txLock = coordinator_.acquireTxLock("mount.open");
+    reloadVolumeFromDisk("mount.open");
+    setMountState(MountState::Dirty);
+    saveState();
+    coordinator_.bumpEpoch();
+  }
   trace_.emit(0, "mount.open", "volume", "clean", "dirty", "normal mount", "ok");
 }
 
 void FileSystemKernel::unmountClean() {
   if (!mounted_) return;
+  coordinator_.releaseAllInodeLocks();
   for (auto& [user, sess] : sessions_) {
     for (auto& [fd, of] : sess.openFiles) {
       auto it = state_.inodes.find(of.inode);
       if (it != state_.inodes.end() && it->second.openCount > 0) --it->second.openCount;
       if (systemOpen_[of.inode] > 0) --systemOpen_[of.inode];
+      if (it != state_.inodes.end() && it->second.deletePending && it->second.openCount == 0 &&
+          coordinator_.inodeHolderCount(of.inode, true) == 0) {
+        releaseInode(of.inode, true);
+      }
     }
     sess.openFiles.clear();
   }
-  setMountState(MountState::Clean);
-  saveState();
-  device_.clearJournal();
+  if (!coordinator_.hasOtherActiveSessions() && coordinator_.listLocks(false).empty()) {
+    auto txLock = coordinator_.acquireTxLock("mount.close");
+    reloadVolumeFromDisk("mount.close");
+    setMountState(MountState::Clean);
+    saveState();
+    device_.clearJournal();
+    coordinator_.bumpEpoch();
+  }
   trace_.save(config::tracePath(), nullptr);
   trace_.emit(0, "mount.close", "volume", "dirty", "clean", "normal unmount", "ok");
+  coordinator_.shutdownClean();
 }
 
 CommandResult FileSystemKernel::execute(const std::vector<std::string>& args, const std::string& rawCommand) {
   if (args.empty()) return ok();
   const auto cmd = lower(args[0]);
   trace_.setContext(currentUser(), rawCommand);
-  if (mounted_) crashPoint("command.dispatch", "before");
-  if (!mounted_ && cmd != "format" && cmd != "help" && cmd != "exit" && cmd != "trace" && cmd != "lang") {
-    return err(ErrorCode::InvalidCommand, msg("volume is not mounted; run format first", "卷尚未挂载；请先运行 format"));
-  }
-  if (requiresLogin(cmd)) {
-    CommandResult result;
-    if (!ensureLogged(&result)) return result;
-  }
   try {
+    coordinator_.heartbeat(currentUser(), rawCommand);
+    checkExternalCrashSignal();
+    VolumeCoordinator::ScopedLock txLock;
+    VolumeCoordinator::ScopedLock readLock;
+    if (mounted_) crashPoint("command.dispatch", "before");
+    const bool mutation = isMutationCommand(cmd, args);
+    if (mutation) {
+      txLock = coordinator_.acquireTxLock(cmd);
+      if (mounted_ && device_.volumeExists()) reloadVolumeFromDisk("pre-mutation " + cmd);
+    } else if (mounted_ && cmd != "lock" && cmd != "sleep" && cmd != "help" && cmd != "exit" &&
+               cmd != "theme" && cmd != "lang") {
+      readLock = coordinator_.acquireReadLock(cmd);
+      reloadIfEpochChanged();
+    } else if (mounted_) {
+      reloadIfEpochChanged();
+    }
+    if (!mounted_ && cmd != "format" && cmd != "help" && cmd != "exit" && cmd != "trace" && cmd != "lang" && cmd != "lock" && cmd != "sleep") {
+      return err(ErrorCode::InvalidCommand, msg("volume is not mounted; run format first", "卷尚未挂载；请先运行 format"));
+    }
+    if (requiresLogin(cmd)) {
+      CommandResult result;
+      if (!ensureLogged(&result)) return result;
+    }
     if (cmd == "format") return cmdFormat();
     if (cmd == "login") return cmdLogin(args);
     if (cmd == "logout") return cmdLogout();
@@ -379,11 +422,18 @@ CommandResult FileSystemKernel::execute(const std::vector<std::string>& args, co
     if (cmd == "chclass") return cmdChclass(args);
     if (cmd == "fsck") return cmdFsck(args);
     if (cmd == "crash") return cmdCrash(args);
+    if (cmd == "lock") return cmdLock(args);
+    if (cmd == "sleep") return cmdSleep(args);
     if (cmd == "theme") return cmdTheme(args);
     if (cmd == "lang") return cmdLang(args);
     if (cmd == "help") return cmdHelp();
   } catch (const CrashException&) {
     throw;
+  } catch (const std::runtime_error& ex) {
+    const std::string message = ex.what();
+    trace_.emit(0, "command.error", cmd, "-", message, "runtime exception", "error");
+    if (startsWith(message, "E_LOCK_BUSY:")) return err(ErrorCode::LockBusy, message.substr(std::string("E_LOCK_BUSY: ").size()));
+    return err(ErrorCode::IoError, message);
   } catch (const std::exception& ex) {
     trace_.emit(0, "command.error", cmd, "-", ex.what(), "uncaught exception", "error");
     return err(ErrorCode::IoError, ex.what());
@@ -649,14 +699,19 @@ void FileSystemKernel::setMountState(MountState state) {
 void FileSystemKernel::recoverIfNeeded() {
   const auto journal = device_.readJournal();
   if (state_.super.mountState == MountState::Clean && journal.empty()) return;
+  auto txLock = coordinator_.acquireTxLock("recovery");
+  reloadVolumeFromDisk("recovery begin");
+  const auto lockedJournal = device_.readJournal();
+  if (state_.super.mountState == MountState::Clean && lockedJournal.empty()) return;
   trace_.emit(0, "recovery.begin", "journal", toString(state_.super.mountState), std::to_string(journal.size()), "dirty mount or journal present", "start");
   setMountState(MountState::Recovering);
-  recoveryFromJournal(journal);
+  recoveryFromJournal(lockedJournal);
   const auto report = fsck(false, true);
   trace_.emit(0, "fsck.light", "volume", "-", report, "automatic recovery check", "ok");
   device_.clearJournal();
   setMountState(MountState::Dirty);
   saveState();
+  coordinator_.bumpEpoch();
   trace_.emit(0, "recovery.end", "journal", "-", "dirty", "redo complete", "ok");
 }
 
@@ -687,6 +742,44 @@ void FileSystemKernel::recoveryFromJournal(const std::vector<std::string>& journ
     }
     (void)image;
   }
+}
+
+void FileSystemKernel::reloadVolumeFromDisk(const std::string& reason) {
+  if (!device_.volumeExists()) return;
+  const auto before = state_.super.nextTxid;
+  deserializeState(device_.readAll());
+  mounted_ = true;
+  trace_.emit(0, "coord.epoch.reload", "volume", std::to_string(before), std::to_string(state_.super.nextTxid), reason, "ok");
+}
+
+bool FileSystemKernel::reloadIfEpochChanged() {
+  std::uint64_t before = 0;
+  std::uint64_t after = 0;
+  if (!coordinator_.observeEpochChange(&before, &after)) return false;
+  reloadVolumeFromDisk("epoch " + std::to_string(before) + " -> " + std::to_string(after));
+  return true;
+}
+
+bool FileSystemKernel::isMutationCommand(const std::string& cmd, const std::vector<std::string>& args) const {
+  static const std::set<std::string> always = {
+      "format", "mkdir", "rmdir", "create", "write", "close", "delete", "rm", "truncate",
+      "clone", "chmod", "chown", "chclass", "logout"};
+  if (always.count(cmd)) return true;
+  if (cmd == "open" && args.size() >= 3 && lower(args[2]).find("truncate") != std::string::npos) return true;
+  if (cmd == "snapshot" && args.size() >= 2) {
+    const auto sub = lower(args[1]);
+    return sub == "create" || sub == "rollback" || sub == "delete";
+  }
+  if (cmd == "class" && args.size() >= 2) {
+    const auto sub = lower(args[1]);
+    return sub == "create" || sub == "grant" || sub == "revoke";
+  }
+  if (cmd == "acl" && args.size() >= 2) {
+    const auto sub = lower(args[1]);
+    return sub == "grant" || sub == "revoke";
+  }
+  if (cmd == "fsck" && args.size() >= 2 && args[1] == "--repair") return true;
+  return false;
 }
 
 FileSystemKernel::Tx FileSystemKernel::beginTx(const std::string& name) {
@@ -724,6 +817,7 @@ void FileSystemKernel::commitTx(Tx& tx) {
   journalLine("CHECKPOINT|" + std::to_string(tx.id));
   trace_.emit(tx.id, "journal.checkpoint", tx.name, "-", "home_blocks", "checkpoint to volume", "ok");
   device_.clearJournal();
+  coordinator_.bumpEpoch();
   crashPoint("journal.checkpoint", "after");
   tx.active = false;
 }
@@ -742,6 +836,8 @@ void FileSystemKernel::crashPoint(const std::string& event, const std::string& p
 
 void FileSystemKernel::maybeCrashNow() {
   trace_.emit(0, "crash.inject", crashMode_, "-", crashEvent_, "simulated abnormal exit", "crash");
+  coordinator_.broadcastCrash(crashMode_.empty() ? "now" : crashMode_ + ":" + crashEvent_);
+  coordinator_.markAbnormalExit();
   throw CrashException(crashMode_.empty() ? "now" : crashMode_ + ":" + crashEvent_);
 }
 
@@ -1140,12 +1236,18 @@ CommandResult FileSystemKernel::cmdLogout() {
     auto it = state_.inodes.find(of.inode);
     if (it != state_.inodes.end() && it->second.openCount > 0) --it->second.openCount;
     if (systemOpen_[of.inode] > 0) --systemOpen_[of.inode];
+    coordinator_.releaseInodeLock(of.inode, fd);
+    if (it != state_.inodes.end() && it->second.deletePending && it->second.openCount == 0 &&
+        coordinator_.inodeHolderCount(of.inode, true) == 0) {
+      releaseInode(of.inode, true);
+    }
     trace_.emit(0, "open.close", std::to_string(fd), "-", std::to_string(of.inode), "logout closes fd", "ok");
   }
   s.openFiles.clear();
   const auto old = activeUser_;
   activeUser_.clear();
   saveState();
+  coordinator_.bumpEpoch();
   return ok(msg("logged out ", "已登出: ") + old + "\n");
 }
 
@@ -1264,9 +1366,21 @@ CommandResult FileSystemKernel::cmdOpen(const std::vector<std::string>& args) {
   if (!canTraverse(rp.canonical, false, &reason)) return err(ErrorCode::PermissionDenied, "access denied: " + reason);
   if (!authCheck(rp.inode, rightForFlag(args[2]), rp.canonical, &reason)) return err(ErrorCode::PermissionDenied, "access denied: " + reason);
   if (session().openFiles.size() >= config::kMaxOpenPerUser) return err(ErrorCode::Busy, "user open file table is full");
+  const int plannedFd = session().nextFd;
+  const auto lockMode = rightForFlag(args[2]) == "w" ? "write" : "read";
+  std::string lockReason;
+  if (!coordinator_.acquireInodeLock(rp.inode, rp.canonical, lockMode, activeUser_, plannedFd, "open " + args[2], &lockReason)) {
+    return err(ErrorCode::LockBusy, lockReason);
+  }
   if (args[2].find("truncate") != std::string::npos) {
     auto tx = beginTx("open.truncate");
     ensureMutablePath(rp.canonical, true, tx.id, &rp);
+    if (rp.inode != inode.id) {
+      coordinator_.releaseInodeLock(inode.id, plannedFd);
+      if (!coordinator_.acquireInodeLock(rp.inode, rp.canonical, "write", activeUser_, plannedFd, "open truncate", &lockReason)) {
+        return err(ErrorCode::LockBusy, lockReason);
+      }
+    }
     setFileData(state_.inodes[rp.inode], "", tx.id);
     commitTx(tx);
   }
@@ -1328,9 +1442,18 @@ CommandResult FileSystemKernel::cmdWrite(const std::vector<std::string>& args, c
   }
   auto tx = beginTx("write");
   ResolvedPath rp;
+  const auto oldInode = it->second.inode;
+  const auto fdForLock = fd;
   ensureMutablePath(it->second.path, true, tx.id, &rp);
   it = session().openFiles.find(fd);
   it->second.inode = rp.inode;
+  if (oldInode != rp.inode) {
+    coordinator_.releaseInodeLock(oldInode, fdForLock);
+    std::string lockReason;
+    if (!coordinator_.acquireInodeLock(rp.inode, rp.canonical, "write", activeUser_, fdForLock, "write COW", &lockReason)) {
+      return err(ErrorCode::LockBusy, lockReason);
+    }
+  }
   auto& inode = state_.inodes[rp.inode];
   auto existing = readFileData(inode);
   if (it->second.flags.find("append") != std::string::npos) it->second.offset = existing.size();
@@ -1354,11 +1477,14 @@ CommandResult FileSystemKernel::cmdClose(const std::vector<std::string>& args) {
   auto inodeIt = state_.inodes.find(inodeId);
   if (inodeIt != state_.inodes.end() && inodeIt->second.openCount > 0) --inodeIt->second.openCount;
   if (systemOpen_[inodeId] > 0) --systemOpen_[inodeId];
+  coordinator_.releaseInodeLock(inodeId, fd);
   session().openFiles.erase(it);
-  if (inodeIt != state_.inodes.end() && inodeIt->second.deletePending && inodeIt->second.openCount == 0) {
+  if (inodeIt != state_.inodes.end() && inodeIt->second.deletePending && inodeIt->second.openCount == 0 &&
+      coordinator_.inodeHolderCount(inodeId, true) == 0) {
     releaseInode(inodeId, true);
   }
   saveState();
+  coordinator_.bumpEpoch();
   return ok(msg("closed fd ", "已关闭 fd ") + std::to_string(fd) + "\n");
 }
 
@@ -1376,8 +1502,13 @@ CommandResult FileSystemKernel::cmdDelete(const std::vector<std::string>& args) 
   auto& parent = state_.inodes[rp.parent];
   parent.entries.erase(rp.leaf);
   refreshDirBlock(parent, tx.id);
-  if (state_.inodes[rp.inode].openCount > 0) state_.inodes[rp.inode].deletePending = true;
-  releaseInode(rp.inode, true);
+  const auto holders = coordinator_.inodeHolderCount(rp.inode, true);
+  if (state_.inodes[rp.inode].openCount > 0 || holders > 0) {
+    state_.inodes[rp.inode].deletePending = true;
+    trace_.emit(tx.id, "inode.lock.delete_pending", rp.canonical, std::to_string(rp.inode), std::to_string(holders), "open holders delay reclaim", "ok");
+  } else {
+    releaseInode(rp.inode, true);
+  }
   trace_.emit(tx.id, "file.delete", rp.canonical, std::to_string(rp.inode), "unlinked", "remove dir entry and maybe reclaim", "ok");
   commitTx(tx);
   return ok("deleted " + rp.canonical + "\n");
@@ -1470,6 +1601,66 @@ CommandResult FileSystemKernel::cmdTrace(const std::vector<std::string>& args) {
 
 CommandResult FileSystemKernel::cmdScope(const std::vector<std::string>& args) {
   return ok(renderScope(args.size() >= 2 ? lower(args[1]) : "summary"));
+}
+
+CommandResult FileSystemKernel::cmdLock(const std::vector<std::string>& args) {
+  const auto sub = args.size() >= 2 ? lower(args[1]) : "show";
+  if (sub == "clear-stale") {
+    const auto removed = coordinator_.clearStaleLocks();
+    return ok("stale locks cleared: " + std::to_string(removed) + "\n");
+  }
+  if (sub != "show") return err(ErrorCode::InvalidArgument, usage("lock show [path]|clear-stale"));
+  std::uint32_t filterInode = 0;
+  std::string filterPath;
+  if (args.size() >= 3 && mounted_) {
+    try {
+      const auto rp = resolve(args[2], true);
+      filterInode = rp.inode;
+      filterPath = rp.canonical;
+    } catch (const std::exception& ex) {
+      return err(ErrorCode::NotFound, ex.what());
+    }
+  }
+  std::vector<std::string> lines;
+  std::ostringstream plain;
+  plain << "kind mode inode fd pid session user stale path reason\n";
+  for (const auto& lock : coordinator_.listLocks(true)) {
+    if (filterInode != 0 && lock.inode != filterInode && lock.path != filterPath) continue;
+    std::ostringstream line;
+    line << lock.kind << " " << lock.mode << " inode=" << lock.inode << " fd=" << lock.fd
+         << " pid=" << lock.pid << " session=" << lock.sessionId << " user=" << lock.user
+         << " stale=" << boolText(lock.stale) << " " << lock.path << " " << lock.reason;
+    lines.push_back(line.str());
+    plain << lock.kind << " " << lock.mode << " " << lock.inode << " " << lock.fd << " "
+          << lock.pid << " " << lock.sessionId << " " << lock.user << " "
+          << boolText(lock.stale) << " " << lock.path << " " << lock.reason << "\n";
+  }
+  if (lines.empty()) lines.push_back("no locks");
+  if (interactiveUi_) {
+    return ok(ui::box(ui::theme(ansiUi_, themeName_, langName_), "Lock holders", lines,
+                      std::min(ui::detectMetrics().columns, ui::detectMetrics().wide ? 132 : 112), "amber") + "\n");
+  }
+  return ok(plain.str());
+}
+
+CommandResult FileSystemKernel::cmdSleep(const std::vector<std::string>& args) {
+  if (args.size() < 2) return err(ErrorCode::InvalidArgument, usage("sleep <ms>"));
+  std::uint64_t totalMs = 0;
+  try {
+    totalMs = std::stoull(args[1]);
+  } catch (const std::exception&) {
+    return err(ErrorCode::InvalidArgument, usage("sleep <ms>"));
+  }
+  constexpr std::uint64_t kStepMs = 100;
+  std::uint64_t elapsed = 0;
+  while (elapsed < totalMs) {
+    const auto step = std::min(kStepMs, totalMs - elapsed);
+    std::this_thread::sleep_for(std::chrono::milliseconds(step));
+    elapsed += step;
+    coordinator_.heartbeat(currentUser(), "sleep");
+    checkExternalCrashSignal();
+  }
+  return ok("slept " + std::to_string(totalMs) + " ms\n");
 }
 
 CommandResult FileSystemKernel::cmdMap(const std::vector<std::string>& args) {
@@ -1568,6 +1759,7 @@ CommandResult FileSystemKernel::cmdSnapshot(const std::vector<std::string>& args
     if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("snapshot rollback <name>"));
     auto it = state_.snapshots.find(args[2]);
     if (it == state_.snapshots.end()) return err(ErrorCode::NotFound, "snapshot not found");
+    if (coordinator_.hasAnyWriteHolder(false)) return err(ErrorCode::LockBusy, "snapshot rollback blocked by another terminal write holder");
     auto tx = beginTx("snapshot.rollback");
     const auto oldRoot = state_.super.activeRoot;
     retainInode(it->second.rootInode);
@@ -1581,6 +1773,7 @@ CommandResult FileSystemKernel::cmdSnapshot(const std::vector<std::string>& args
     if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("snapshot delete <name>"));
     auto it = state_.snapshots.find(args[2]);
     if (it == state_.snapshots.end()) return err(ErrorCode::NotFound, "snapshot not found");
+    if (coordinator_.hasAnyWriteHolder(false)) return err(ErrorCode::LockBusy, "snapshot delete blocked by another terminal write holder");
     auto tx = beginTx("snapshot.delete");
     const auto root = it->second.rootInode;
     state_.snapshots.erase(it);
@@ -1896,19 +2089,19 @@ CommandResult FileSystemKernel::cmdHelp() {
         << "  format | login <用户> [密码] | logout | whoami | exit\n"
         << "  mkdir/rmdir/chdir/dir/create/open/read/write/close/delete/rm/truncate\n"
         << "  trace on/off/show [数量]/save <文件>/replay <文件>/step/clear\n"
-        << "  scope [inode|block|journal|open|tree] | map [blocks|inode|journal|refcount|owner]\n"
+        << "  scope [inode|block|journal|open|locks|tree] | map [blocks|inode|journal|refcount|owner]\n"
         << "  snapshot create/list/show/diff/rollback/delete | clone <源> <目标>\n"
         << "  class create/grant/revoke/list/tree | chmod/chown/chclass | acl show/grant/revoke\n"
-        << "  crash now/after/before/at/clear | fsck [--repair] | theme scope-dark|blue|mono | lang zh|en\n";
+        << "  crash now/after/before/at/clear | lock show [路径]/clear-stale | sleep <毫秒> | fsck [--repair] | theme scope-dark|blue|mono | lang zh|en\n";
   } else {
     out << "ScopeFS commands\n"
         << "  format | login <user> [password] | logout | whoami | exit\n"
         << "  mkdir/rmdir/chdir/dir/create/open/read/write/close/delete/rm/truncate\n"
         << "  trace on/off/show [n]/save <file>/replay <file>/step/clear\n"
-        << "  scope [inode|block|journal|open|tree] | map [blocks|inode|journal|refcount|owner]\n"
+        << "  scope [inode|block|journal|open|locks|tree] | map [blocks|inode|journal|refcount|owner]\n"
         << "  snapshot create/list/show/diff/rollback/delete | clone <src> <dst>\n"
         << "  class create/grant/revoke/list/tree | chmod/chown/chclass | acl show/grant/revoke\n"
-        << "  crash now/after/before/at/clear | fsck [--repair] | theme scope-dark|blue|mono | lang zh|en\n";
+        << "  crash now/after/before/at/clear | lock show [path]/clear-stale | sleep <ms> | fsck [--repair] | theme scope-dark|blue|mono | lang zh|en\n";
   }
   return ok(out.str());
 }
@@ -2031,6 +2224,12 @@ std::string FileSystemKernel::renderScope(const std::string& what) const {
                          " offset=" + std::to_string(of.offset) + " " + of.flags + " " + of.path);
         }
       }
+      for (const auto& lock : coordinator_.listLocks(false)) {
+        if (lock.kind != "inode") continue;
+        body.push_back("holder pid=" + std::to_string(lock.pid) + " session=" + clip(lock.sessionId, 18) +
+                       " fd=" + std::to_string(lock.fd) + " inode=#" + std::to_string(lock.inode) +
+                       " " + lock.mode + " " + lock.path);
+      }
       if (body.empty()) body.push_back("no open file descriptors");
       return ui::box(th, "Open file tables", body, std::min(metrics.columns, metrics.wide ? 132 : 112), "blue") + "\n";
     }
@@ -2044,7 +2243,33 @@ std::string FileSystemKernel::renderScope(const std::string& what) const {
     for (const auto& [inode, count] : systemOpen_) {
       if (count > 0) out << "inode " << inode << " refs " << count << "\n";
     }
+    out << "cross-terminal holders\n";
+    for (const auto& lock : coordinator_.listLocks(false)) {
+      if (lock.kind == "inode") {
+        out << "inode " << lock.inode << " fd " << lock.fd << " " << lock.mode
+            << " pid " << lock.pid << " session " << lock.sessionId << " " << lock.path << "\n";
+      }
+    }
     return out.str();
+  }
+  if (what == "locks") {
+    std::vector<std::string> body;
+    std::ostringstream plain;
+    plain << "kind mode inode fd pid session user stale path reason\n";
+    for (const auto& lock : coordinator_.listLocks(true)) {
+      std::ostringstream line;
+      line << lock.kind << " " << lock.mode << " inode=" << lock.inode << " fd=" << lock.fd
+           << " pid=" << lock.pid << " session=" << clip(lock.sessionId, 18)
+           << " user=" << lock.user << " stale=" << boolText(lock.stale)
+           << " " << lock.path << " " << lock.reason;
+      body.push_back(line.str());
+      plain << lock.kind << " " << lock.mode << " " << lock.inode << " " << lock.fd << " "
+            << lock.pid << " " << lock.sessionId << " " << lock.user << " "
+            << boolText(lock.stale) << " " << lock.path << " " << lock.reason << "\n";
+    }
+    if (body.empty()) body.push_back("no cross-terminal locks");
+    if (interactiveUi_) return ui::box(th, "Lock holders", body, std::min(metrics.columns, metrics.wide ? 132 : 112), "amber") + "\n";
+    return plain.str();
   }
   if (interactiveUi_) {
     std::vector<ui::InodeRow> hot;
@@ -2191,6 +2416,7 @@ std::string FileSystemKernel::fsck(bool repair, bool light) {
     }
     recomputeSuper();
     saveState();
+    coordinator_.bumpEpoch();
   }
   trace_.emit(0, light ? "fsck.light" : "fsck.full", "volume", "-", std::to_string(issues), repair ? "repair" : "check", issues ? "issues" : "ok");
   if (issues == 0) out << "fsck: clean\n";
@@ -2232,6 +2458,10 @@ std::string errorCodeName(ErrorCode code) {
     case ErrorCode::NoSpace: return "E_NOSPC";
     case ErrorCode::Busy: return "E_BUSY";
     case ErrorCode::CrashInjected: return "E_CRASH";
+    case ErrorCode::LockBusy: return "E_LOCK_BUSY";
+    case ErrorCode::StaleLock: return "E_STALE_LOCK";
+    case ErrorCode::ConcurrentReload: return "E_CONCURRENT_RELOAD";
+    case ErrorCode::SignalCrash: return "E_SIGNAL_CRASH";
     case ErrorCode::IoError: return "E_IO";
   }
   return "E_UNKNOWN";

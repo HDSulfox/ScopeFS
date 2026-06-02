@@ -192,6 +192,7 @@ int Shell::run(std::istream& in, std::ostream& out, bool interactive, const Term
   std::string line;
   while (true) {
     const bool useEditor = interactive && caps.inputTty;
+    if (interactive) kernel_.checkExternalCrashSignal();
     if (useEditor) {
       line = readInteractiveLine(out, caps);
     } else if (interactive) {
@@ -389,15 +390,16 @@ std::vector<std::string> Shell::completionCandidates(const std::string& line, st
       "login", "logout", "whoami", "format", "mkdir", "rmdir", "chdir", "cd", "dir", "ls",
       "create", "open", "read", "write", "close", "delete", "rm", "truncate", "trace", "scope",
       "map", "snapshot", "clone", "class", "chmod", "chown", "chclass", "acl", "fsck", "crash",
-      "theme", "lang", "help", "exit"};
+      "lock", "sleep", "theme", "lang", "help", "exit"};
   static const std::map<std::string, std::vector<std::string>> subcommands = {
       {"map", {"blocks", "inode", "journal", "refcount", "owner"}},
-      {"scope", {"inode", "block", "journal", "open", "tree"}},
+      {"scope", {"inode", "block", "journal", "open", "locks", "tree"}},
       {"trace", {"on", "off", "show", "save", "replay", "step", "clear"}},
       {"snapshot", {"create", "list", "show", "diff", "rollback", "delete"}},
       {"class", {"create", "grant", "revoke", "list", "tree"}},
       {"acl", {"show", "grant", "revoke"}},
       {"crash", {"now", "after", "before", "at", "clear"}},
+      {"lock", {"show", "clear-stale"}},
       {"theme", {"scope-dark", "blue", "mono"}},
       {"lang", {"zh", "en"}},
       {"open", {"r", "w", "rw", "append", "truncate"}},

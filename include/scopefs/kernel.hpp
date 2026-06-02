@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "scopefs/block_device.hpp"
+#include "scopefs/coordinator.hpp"
 #include "scopefs/model.hpp"
 #include "scopefs/ui.hpp"
 
@@ -30,6 +31,10 @@ enum class ErrorCode {
   NoSpace,
   Busy,
   CrashInjected,
+  LockBusy,
+  StaleLock,
+  ConcurrentReload,
+  SignalCrash,
   IoError
 };
 
@@ -60,6 +65,7 @@ class FileSystemKernel {
   std::string prompt() const;
   std::string currentUser() const;
   bool isMounted() const;
+  void checkExternalCrashSignal();
   std::vector<std::string> completePath(const std::string& token, bool directoriesOnly) const;
 
  private:
@@ -80,6 +86,7 @@ class FileSystemKernel {
 
   TraceSink trace_;
   BlockDevice device_;
+  VolumeCoordinator coordinator_;
   FsState state_;
   std::map<std::string, UserSession> sessions_;
   std::map<std::uint32_t, int> systemOpen_;
@@ -113,6 +120,9 @@ class FileSystemKernel {
   void setMountState(MountState state);
   void recoverIfNeeded();
   void recoveryFromJournal(const std::vector<std::string>& journal);
+  bool reloadIfEpochChanged();
+  void reloadVolumeFromDisk(const std::string& reason);
+  bool isMutationCommand(const std::string& cmd, const std::vector<std::string>& args) const;
 
   Tx beginTx(const std::string& name);
   void commitTx(Tx& tx);
@@ -167,6 +177,8 @@ class FileSystemKernel {
   CommandResult cmdChclass(const std::vector<std::string>& args);
   CommandResult cmdFsck(const std::vector<std::string>& args);
   CommandResult cmdCrash(const std::vector<std::string>& args);
+  CommandResult cmdLock(const std::vector<std::string>& args);
+  CommandResult cmdSleep(const std::vector<std::string>& args);
   CommandResult cmdTheme(const std::vector<std::string>& args);
   CommandResult cmdLang(const std::vector<std::string>& args);
   CommandResult cmdHelp();

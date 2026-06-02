@@ -9,6 +9,7 @@ add_executable(scopefs
   src/main.cpp
   src/util.cpp
   src/trace.cpp
+  src/coordinator.cpp
   src/block_device.cpp
   src/kernel.cpp
   src/shell.cpp
