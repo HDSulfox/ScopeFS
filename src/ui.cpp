@@ -25,16 +25,20 @@ std::string zh(const std::string& key) {
   static const std::map<std::string, std::string> dict = {
       {"command_focus", "命令焦点"},
       {"command_surface", "命令工作区"},
-      {"observable_kernel", "可观测 inode/block/journal/COW 内核"},
+      {"observable_kernel", "可观测索引节点/块/日志/COW 内核"},
       {"terminal_first", "终端优先"},
       {"volume", "卷状态"},
       {"session", "会话"},
       {"observability", "观测"},
       {"mount", "挂载"},
       {"blocks", "块"},
+      {"inode", "索引节点"},
+      {"journal", "日志"},
+      {"tx", "事务"},
+      {"cwd", "当前目录"},
       {"user", "用户"},
       {"open", "打开"},
-      {"trace", "trace"},
+      {"trace", "跟踪"},
       {"snap", "快照"},
       {"tips", "提示"},
       {"tab_commands", "Tab 补全"},
@@ -46,13 +50,13 @@ std::string zh(const std::string& key) {
       {"size", "大小"},
       {"kernel", "内核"},
       {"capacity", "容量"},
-      {"hot_inodes", "热点 inode"},
-      {"no_inode_activity", "暂无 inode 活动"},
+      {"hot_inodes", "热点索引节点"},
+      {"no_inode_activity", "暂无索引节点活动"},
       {"tree_shared", "目录树 / 共享引用"},
       {"disk_map", "磁盘图"},
-      {"trace_timeline", "Trace 时间线"},
-      {"trace_replay", "Trace 回放 / 只读"},
-      {"trace_step", "Trace 单步"},
+      {"trace_timeline", "跟踪时间线"},
+      {"trace_replay", "跟踪回放 / 只读"},
+      {"trace_step", "跟踪单步"},
       {"snapshot_diff", "快照 diff"},
       {"class_graph", "身份类图"},
       {"acl_graph", "ACL 图"},
@@ -68,13 +72,17 @@ std::string en(const std::string& key) {
   static const std::map<std::string, std::string> dict = {
       {"command_focus", "command focus"},
       {"command_surface", "command surface"},
-      {"observable_kernel", "observable inode/block/journal/COW kernel"},
+      {"observable_kernel", "observable index-node/block/journal/COW kernel"},
       {"terminal_first", "terminal-first"},
       {"volume", "Volume"},
       {"session", "Session"},
       {"observability", "Observability"},
       {"mount", "mount"},
       {"blocks", "blocks"},
+      {"inode", "index node"},
+      {"journal", "journal"},
+      {"tx", "transaction"},
+      {"cwd", "current directory"},
       {"user", "user"},
       {"open", "open"},
       {"trace", "trace"},
@@ -89,8 +97,8 @@ std::string en(const std::string& key) {
       {"size", "size"},
       {"kernel", "Kernel"},
       {"capacity", "Capacity"},
-      {"hot_inodes", "Hot inodes"},
-      {"no_inode_activity", "no inode activity"},
+      {"hot_inodes", "Hot index nodes"},
+      {"no_inode_activity", "no index-node activity"},
       {"tree_shared", "Tree / shared references"},
       {"disk_map", "Disk map"},
       {"trace_timeline", "Trace timeline"},
@@ -175,10 +183,10 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"block.release", "释放块引用"},
       {"journal.begin", "事务开始"},
       {"journal.record", "记录事务镜像"},
-      {"journal.record.write", "写入 journal 记录"},
+      {"journal.record.write", "写入日志记录"},
       {"journal.commit", "事务提交"},
       {"journal.checkpoint", "事务检查点"},
-      {"journal.clear", "清空 journal"},
+      {"journal.clear", "清空日志"},
       {"mount.missing", "卷未找到"},
       {"mount.open", "挂载打开"},
       {"mount.close", "挂载关闭"},
@@ -193,15 +201,15 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"crash.inject", "触发崩溃"},
       {"path.lookup", "路径解析"},
       {"auth.check", "权限判定"},
-      {"inode.alloc", "分配 inode"},
-      {"inode.retain", "保留 inode 引用"},
-      {"inode.release", "释放 inode 引用"},
-      {"inode.free", "回收 inode"},
-      {"inode.clone", "克隆 inode"},
+      {"inode.alloc", "分配索引节点"},
+      {"inode.retain", "保留索引节点引用"},
+      {"inode.release", "释放索引节点引用"},
+      {"inode.free", "回收索引节点"},
+      {"inode.clone", "克隆索引节点"},
       {"inode.write_map", "更新块映射"},
-      {"inode.lock.acquire", "获取 inode 锁"},
-      {"inode.lock.release", "释放 inode 锁"},
-      {"inode.lock.conflict", "inode 锁冲突"},
+      {"inode.lock.acquire", "获取索引节点锁"},
+      {"inode.lock.release", "释放索引节点锁"},
+      {"inode.lock.conflict", "索引节点锁冲突"},
       {"inode.lock.delete_pending", "标记延迟删除"},
       {"inode.chmod", "修改模式"},
       {"inode.chown", "修改属主"},
@@ -228,9 +236,9 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"class.revoke", "收回身份类"},
       {"acl.grant", "授予 ACL"},
       {"acl.revoke", "收回 ACL"},
-      {"trace.on", "开启 trace"},
-      {"trace.off", "关闭 trace"},
-      {"trace.clear", "清空 trace"},
+      {"trace.on", "开启跟踪"},
+      {"trace.off", "关闭跟踪"},
+      {"trace.clear", "清空跟踪"},
       {"command.error", "命令错误"}};
   static const std::map<std::string, std::string> enMap = {
       {"coord.session.start", "session start"},
@@ -250,7 +258,7 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"block.retain", "retain block ref"},
       {"block.release", "release block ref"},
       {"journal.begin", "begin transaction"},
-      {"journal.record", "record tx image"},
+      {"journal.record", "record transaction image"},
       {"journal.record.write", "write journal record"},
       {"journal.commit", "commit transaction"},
       {"journal.checkpoint", "checkpoint transaction"},
@@ -261,7 +269,7 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"super.mount_state", "mount state change"},
       {"recovery.begin", "recovery begin"},
       {"recovery.redo", "recovery redo"},
-      {"recovery.ignore", "ignore uncommitted tx"},
+      {"recovery.ignore", "ignore uncommitted transaction"},
       {"recovery.end", "recovery complete"},
       {"fsck.light", "light fsck"},
       {"fsck.full", "full fsck"},
@@ -269,15 +277,15 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"crash.inject", "trigger crash"},
       {"path.lookup", "path lookup"},
       {"auth.check", "permission check"},
-      {"inode.alloc", "allocate inode"},
-      {"inode.retain", "retain inode ref"},
-      {"inode.release", "release inode ref"},
-      {"inode.free", "free inode"},
-      {"inode.clone", "clone inode"},
+      {"inode.alloc", "allocate index node"},
+      {"inode.retain", "retain index-node ref"},
+      {"inode.release", "release index-node ref"},
+      {"inode.free", "free index node"},
+      {"inode.clone", "clone index node"},
       {"inode.write_map", "update block map"},
-      {"inode.lock.acquire", "acquire inode lock"},
-      {"inode.lock.release", "release inode lock"},
-      {"inode.lock.conflict", "inode lock conflict"},
+      {"inode.lock.acquire", "acquire index-node lock"},
+      {"inode.lock.release", "release index-node lock"},
+      {"inode.lock.conflict", "index-node lock conflict"},
       {"inode.lock.delete_pending", "mark delete pending"},
       {"inode.chmod", "change mode"},
       {"inode.chown", "change owner"},
@@ -324,12 +332,12 @@ std::string traceObjectLabel(const Theme& th, const std::string& object) {
       {"mutex", "协调互斥"},
       {"signal", "崩溃信号"},
       {"volume", "虚拟卷"},
-      {"journal", "journal 区"},
+      {"journal", "日志区"},
       {"superblock", "超级块"},
       {"epoch", "卷版本"},
       {"locks", "锁表"},
-      {"trace", "trace 开关"},
-      {"ring", "trace 缓冲区"},
+      {"trace", "跟踪开关"},
+      {"ring", "跟踪缓冲区"},
       {"before.command.dispatch", "命令分发前"}};
   static const std::map<std::string, std::string> enMap = {
       {"tx", "transaction lock"},
@@ -348,6 +356,28 @@ std::string traceObjectLabel(const Theme& th, const std::string& object) {
   const auto it = map.find(object);
   if (it != map.end()) return it->second;
   return object;
+}
+
+std::string txLabel(const Theme& th, std::uint64_t txid) {
+  return std::string(th.lang == "zh" ? "事务" : "transaction") + "#" + std::to_string(txid);
+}
+
+std::string mapWhatLabel(const Theme& th, const std::string& what) {
+  if (what == "inode") return th.lang == "zh" ? "索引节点" : "index node";
+  if (what == "journal") return th.lang == "zh" ? "日志" : "journal";
+  if (what == "blocks") return th.lang == "zh" ? "块" : "blocks";
+  if (what == "refcount") return th.lang == "zh" ? "引用计数" : "reference count";
+  if (what == "owner") return th.lang == "zh" ? "属主" : "owner";
+  return what;
+}
+
+std::string extraLabel(const Theme& th, const std::string& key) {
+  if (key == "cwd") return th.lang == "zh" ? "当前目录" : "current directory";
+  if (key == "trace") return th.lang == "zh" ? "跟踪" : "trace";
+  if (key == "classes") return th.lang == "zh" ? "身份类" : "classes";
+  if (key == "view") return th.lang == "zh" ? "视图" : "view";
+  if (key == "mode") return th.lang == "zh" ? "模式" : "mode";
+  return key;
 }
 
 std::string blockGlyph(std::uint32_t refcount) {
@@ -430,28 +460,41 @@ std::string mapTone(const Theme& th, const std::string& what, const MapCell& cel
 }
 
 std::string mapLegend(const Theme& th, const std::string& what) {
+  const auto inodeLabel = th.lang == "zh" ? "索引节点" : "index node";
+  const auto journalLabel = th.lang == "zh" ? "日志" : "journal";
   if (what == "blocks") {
-    return color(th, th.dim, "legend ") + color(th, th.white, "S super ") +
-           color(th, th.amber, "R refmeta ") + color(th, th.blue, "I inode ") +
-           color(th, th.green, "J journal ") + color(th, th.magenta, "P snapshot ") +
-           color(th, th.gray, "U users D data . free");
+    return color(th, th.dim, th.lang == "zh" ? "图例 " : "legend ") +
+           color(th, th.white, th.lang == "zh" ? "S 超级块 " : "S super ") +
+           color(th, th.amber, th.lang == "zh" ? "R 引用元数据 " : "R refmeta ") +
+           color(th, th.blue, "I " + std::string(inodeLabel) + " ") +
+           color(th, th.green, "J " + std::string(journalLabel) + " ") +
+           color(th, th.magenta, th.lang == "zh" ? "P 快照 " : "P snapshot ") +
+           color(th, th.gray, th.lang == "zh" ? "U 用户 D 数据 . 空闲" : "U users D data . free");
   }
   if (what == "inode") {
-    return color(th, th.dim, "legend ") + color(th, th.blue, "I inode-table ") +
-           color(th, th.amber, "0-f owner-inode data ") + color(th, th.magenta, "* shared ") +
-           color(th, th.gray, ". unrelated/free");
+    return color(th, th.dim, th.lang == "zh" ? "图例 " : "legend ") +
+           color(th, th.blue, th.lang == "zh" ? "I 索引节点表 " : "I index-node table ") +
+           color(th, th.amber, th.lang == "zh" ? "0-f 属主索引节点数据 " : "0-f owner index-node data ") +
+           color(th, th.magenta, th.lang == "zh" ? "* 共享 " : "* shared ") +
+           color(th, th.gray, th.lang == "zh" ? ". 无关/空闲" : ". unrelated/free");
   }
   if (what == "journal") {
-    return color(th, th.dim, "legend ") + color(th, th.green, "J journal-reserved ") +
-           color(th, th.amber, "0-f last-writer tx ") + color(th, th.white, "S super ") +
-           color(th, th.gray, ". no journal signal");
+    return color(th, th.dim, th.lang == "zh" ? "图例 " : "legend ") +
+           color(th, th.green, th.lang == "zh" ? "J 日志保留区 " : "J journal reserved ") +
+           color(th, th.amber, th.lang == "zh" ? "0-f 最近写入事务 " : "0-f last-writer transaction ") +
+           color(th, th.white, th.lang == "zh" ? "S 超级块 " : "S super ") +
+           color(th, th.gray, th.lang == "zh" ? ". 无日志信号" : ". no journal signal");
   }
   if (what == "owner") {
-    return color(th, th.dim, "legend ") + color(th, th.amber, "0-f owner inode modulo 16 ") +
-           color(th, th.magenta, "shared highlighted ") + color(th, th.gray, ". no owner");
+    return color(th, th.dim, th.lang == "zh" ? "图例 " : "legend ") +
+           color(th, th.amber, th.lang == "zh" ? "0-f 属主索引节点 mod16 " : "0-f owner index-node modulo 16 ") +
+           color(th, th.magenta, th.lang == "zh" ? "共享高亮 " : "shared highlighted ") +
+           color(th, th.gray, th.lang == "zh" ? ". 无属主" : ". no owner");
   }
-  return color(th, th.dim, "legend ") + color(th, th.gray, ". free ") +
-         color(th, th.white, "░ allocated ") + color(th, th.magenta, "▒/█ shared");
+  return color(th, th.dim, th.lang == "zh" ? "图例 " : "legend ") +
+         color(th, th.gray, th.lang == "zh" ? ". 空闲 " : ". free ") +
+         color(th, th.white, th.lang == "zh" ? "░ 已分配 " : "░ allocated ") +
+         color(th, th.magenta, th.lang == "zh" ? "▒/█ 共享" : "▒/█ shared");
 }
 
 std::string repeatText(const std::string& text, int count) {
@@ -737,15 +780,15 @@ std::string renderDashboard(const Theme& th, const TerminalMetrics& metrics, con
   const int cardWidth = metrics.compact ? width : (width - 2 * cardGap) / 3;
   auto volume = box(th, text(th, "volume"), {
       text(th, "mount") + "  " + color(th, status.mountState == "clean" ? th.green : th.amber, status.mountState),
-      "tx     " + color(th, th.white, "#" + std::to_string(status.txid)),
+      color(th, th.white, txLabel(th, status.txid)),
       text(th, "blocks") + " " + progress(th, status.blocks, status.blockTotal, std::max(10, cardWidth - 18), "blue")}, cardWidth, "border");
   auto session = box(th, text(th, "session"), {
       text(th, "user") + "   " + color(th, th.white, status.user),
-      "cwd    " + color(th, th.gray, truncate(status.cwd, cardWidth - 12)),
+      text(th, "cwd") + "  " + color(th, th.gray, truncate(status.cwd, cardWidth - 12)),
       text(th, "open") + "   " + color(th, th.white, std::to_string(status.openFiles))}, cardWidth, "blue");
   auto obs = box(th, text(th, "observability"), {
       text(th, "trace") + "  " + color(th, status.trace ? th.green : th.red, status.trace ? "on" : "off"),
-      "inode  " + progress(th, status.inodes, status.inodeTotal, std::max(10, cardWidth - 18), "amber"),
+      text(th, "inode") + "  " + progress(th, status.inodes, status.inodeTotal, std::max(10, cardWidth - 18), "amber"),
       text(th, "snap") + "   " + color(th, th.magenta, std::to_string(status.snapshots))}, cardWidth, "magenta");
   if (metrics.compact) {
     out << indentBlock(volume, left) << "\n" << indentBlock(session, left) << "\n" << indentBlock(obs, left) << "\n";
@@ -839,7 +882,7 @@ std::string renderDir(const Theme& th, const TerminalMetrics& metrics, const std
     const auto nameTone = row.type == "dir" ? th.amber : (row.shared ? th.magenta : th.white);
     const auto nameCell = accent(th, nameTone, padRight(row.name, nameWidth));
     const auto typeCell = color(th, th.white, padRight(row.type, typeWidth));
-    const auto meta = color(th, th.dim, "inode ") + accent(th, th.amber, std::to_string(row.inode)) +
+    const auto meta = color(th, th.dim, text(th, "inode") + " ") + accent(th, th.amber, std::to_string(row.inode)) +
                       color(th, th.dim, " " + text(th, "gen") + " ") + color(th, th.white, std::to_string(row.generation)) +
                       color(th, th.dim, " " + text(th, "ref") + " ") + color(th, row.shared ? th.magenta : th.white, std::to_string(row.refcount));
     const auto ownerClass = row.owner + ":" + row.klass;
@@ -858,10 +901,10 @@ std::string renderScope(const Theme& th, const TerminalMetrics& metrics, const K
   const int card = metrics.compact ? width : (width - gap) / 2;
   auto a = box(th, text(th, "kernel"), {
       text(th, "mount") + "  " + color(th, status.mountState == "clean" ? th.green : th.amber, status.mountState),
-      "tx     " + color(th, th.white, "#" + std::to_string(status.txid)),
+      color(th, th.white, txLabel(th, status.txid)),
       "root   " + color(th, th.gray, status.mounted ? "visible" : "unmounted")}, card, "amber");
   auto b = box(th, text(th, "capacity"), {
-      "inode  " + progress(th, status.inodes, status.inodeTotal, std::max(12, card - 18), "amber") + " " + std::to_string(status.inodes),
+      text(th, "inode") + "  " + progress(th, status.inodes, status.inodeTotal, std::max(12, card - 18), "amber") + " " + std::to_string(status.inodes),
       text(th, "blocks") + "  " + progress(th, status.blocks, status.blockTotal, std::max(12, card - 18), "blue") + " " + std::to_string(status.blocks),
       text(th, "snap") + "   " + color(th, th.magenta, std::to_string(status.snapshots))}, card, "blue");
   std::vector<std::string> hot;
@@ -873,7 +916,7 @@ std::string renderScope(const Theme& th, const TerminalMetrics& metrics, const K
   if (hot.empty()) hot.push_back(color(th, th.dim, text(th, "no_inode_activity")));
   auto c = box(th, text(th, "hot_inodes"), hot, card, "magenta");
   std::vector<std::string> misc;
-  for (const auto& item : extra) misc.push_back(color(th, th.gray, item.first) + "  " + color(th, th.white, item.second));
+  for (const auto& item : extra) misc.push_back(color(th, th.gray, extraLabel(th, item.first)) + "  " + color(th, th.white, item.second));
   if (misc.empty()) misc.push_back(text(th, "trace") + "  " + color(th, status.trace ? th.green : th.red, status.trace ? "on" : "off"));
   auto d = box(th, text(th, "session"), misc, card, "border");
   if (metrics.compact) return a + "\n" + b + "\n" + c + "\n" + d + "\n";
@@ -920,11 +963,11 @@ std::string renderMap(const Theme& th, const TerminalMetrics& metrics, const std
       for (const auto& c : cells) {
         if (c.lastWriterTxid == 0) continue;
         highlights.push_back("block " + color(th, th.amber, std::to_string(c.block)) +
-                             " tx=" + std::to_string(c.lastWriterTxid) +
+                             " " + txLabel(th, c.lastWriterTxid) +
                              " owner=#" + std::to_string(c.ownerInode));
         if (highlights.size() >= 4) break;
       }
-      if (!highlights.empty()) rendered.push_back(color(th, th.amber, "tx-written blocks"));
+      if (!highlights.empty()) rendered.push_back(color(th, th.amber, th.lang == "zh" ? "事务写入块" : "transaction-written blocks"));
     } else {
       for (const auto& c : cells) {
         if (c.refcount <= 1) continue;
@@ -936,7 +979,7 @@ std::string renderMap(const Theme& th, const TerminalMetrics& metrics, const std
       if (!highlights.empty()) rendered.push_back(color(th, th.magenta, "shared hotspots"));
     }
     rendered.insert(rendered.end(), highlights.begin(), highlights.end());
-    return box(th, text(th, "disk_map") + " / " + what, rendered, width, what == "journal" ? "green" : (what == "inode" ? "blue" : "amber")) + "\n";
+    return box(th, text(th, "disk_map") + " / " + mapWhatLabel(th, what), rendered, width, what == "journal" ? "green" : (what == "inode" ? "blue" : "amber")) + "\n";
   }
 }
 
@@ -951,13 +994,13 @@ std::string renderTraceTimeline(const Theme& th, const TerminalMetrics& metrics,
     std::ostringstream line;
     line << color(th, toneCode(th, tone), branch) << " "
          << color(th, th.dim, "#" + std::to_string(e.seq)) << " "
-         << color(th, th.amber, "tx" + std::to_string(e.txid)) << " "
+         << color(th, th.amber, txLabel(th, e.txid)) << " "
          << color(th, th.white, truncate(traceTypeLabel(th, e.type), 24)) << " "
          << color(th, th.gray, truncate(traceObjectLabel(th, e.object), width - 58)) << " "
          << badge(th, e.status, tone);
     lines.push_back(line.str());
   }
-  if (lines.empty()) lines.push_back(color(th, th.dim, th.lang == "zh" ? "暂无 trace 事件" : "no trace events"));
+  if (lines.empty()) lines.push_back(color(th, th.dim, th.lang == "zh" ? "暂无跟踪事件" : "no trace events"));
   std::string translatedTitle = title;
   if (title == "Trace timeline") translatedTitle = text(th, "trace_timeline");
   else if (title == "Trace replay / read-only") translatedTitle = text(th, "trace_replay");

@@ -17,6 +17,10 @@ scope
 exit
 "@
 
+$inodeZh = "$([char]0x7D22)$([char]0x5F15)$([char]0x8282)$([char]0x70B9)"
+$traceZh = "$([char]0x8DDF)$([char]0x8E2A)"
+$dashboardZh = "$([char]0x547D)$([char]0x4EE4)$([char]0x7126)$([char]0x70B9)"
+
 foreach ($width in @(88, 120, 160)) {
   Write-Host "== interactive width $width =="
   $env:SCOPEFS_WIDTH = "$width"
@@ -37,7 +41,10 @@ foreach ($width in @(88, 120, 160)) {
     Write-Host $stderr
     throw "interactive width $width failed with exit code $($proc.ExitCode)"
   }
-  if ($stdout -notmatch "ScopeFS" -or $stdout -notmatch "inode" -or $stdout -notmatch "Trace") {
+  $hasInodeMarker = ($stdout -match [regex]::Escape($inodeZh) -or $stdout -match "index node" -or $stdout -match "inode")
+  $hasTraceMarker = ($stdout -match [regex]::Escape($traceZh) -or $stdout -match "Trace" -or $stdout -match "trace")
+  $hasDashboardMarker = ($stdout -match "ScopeFS" -or $stdout -match [regex]::Escape($dashboardZh) -or $stdout -match "command focus")
+  if (!$hasDashboardMarker -or !$hasInodeMarker -or !$hasTraceMarker) {
     throw "interactive width $width did not render expected UI markers"
   }
 }
