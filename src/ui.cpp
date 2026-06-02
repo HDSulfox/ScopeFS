@@ -155,6 +155,201 @@ std::string eventTone(const TraceEvent& event) {
   return "gray";
 }
 
+std::string traceTypeLabel(const Theme& th, const std::string& type) {
+  static const std::map<std::string, std::string> zhMap = {
+      {"coord.session.start", "会话启动"},
+      {"coord.session.stop", "会话结束"},
+      {"coord.lock.acquire", "获取协调锁"},
+      {"coord.lock.release", "释放协调锁"},
+      {"coord.lock.wait", "等待协调锁"},
+      {"coord.lock.deny", "协调锁忙"},
+      {"coord.lock.clear_stale", "清理陈旧锁"},
+      {"coord.epoch.bump", "卷版本递增"},
+      {"coord.epoch.reload", "重载卷状态"},
+      {"coord.signal.crash", "广播崩溃信号"},
+      {"coord.signal.receive", "收到崩溃信号"},
+      {"block.read", "读取块层"},
+      {"block.write", "写入块层"},
+      {"block.alloc", "分配数据块"},
+      {"block.retain", "保留块引用"},
+      {"block.release", "释放块引用"},
+      {"journal.begin", "事务开始"},
+      {"journal.record", "记录事务镜像"},
+      {"journal.record.write", "写入 journal 记录"},
+      {"journal.commit", "事务提交"},
+      {"journal.checkpoint", "事务检查点"},
+      {"journal.clear", "清空 journal"},
+      {"mount.missing", "卷未找到"},
+      {"mount.open", "挂载打开"},
+      {"mount.close", "挂载关闭"},
+      {"super.mount_state", "挂载状态切换"},
+      {"recovery.begin", "恢复开始"},
+      {"recovery.redo", "恢复重放"},
+      {"recovery.ignore", "忽略未提交事务"},
+      {"recovery.end", "恢复完成"},
+      {"fsck.light", "轻量 fsck"},
+      {"fsck.full", "完整 fsck"},
+      {"crash.point", "崩溃注入点"},
+      {"crash.inject", "触发崩溃"},
+      {"path.lookup", "路径解析"},
+      {"auth.check", "权限判定"},
+      {"inode.alloc", "分配 inode"},
+      {"inode.retain", "保留 inode 引用"},
+      {"inode.release", "释放 inode 引用"},
+      {"inode.free", "回收 inode"},
+      {"inode.clone", "克隆 inode"},
+      {"inode.write_map", "更新块映射"},
+      {"inode.lock.acquire", "获取 inode 锁"},
+      {"inode.lock.release", "释放 inode 锁"},
+      {"inode.lock.conflict", "inode 锁冲突"},
+      {"inode.lock.delete_pending", "标记延迟删除"},
+      {"inode.chmod", "修改模式"},
+      {"inode.chown", "修改属主"},
+      {"inode.chclass", "修改所属类"},
+      {"cow.break", "写时拷贝断开"},
+      {"cow.path_root", "复制共享根"},
+      {"cow.path_node", "复制共享路径"},
+      {"session.login", "用户登录"},
+      {"session.chdir", "切换目录"},
+      {"open.fd", "打开文件描述符"},
+      {"open.close", "关闭文件描述符"},
+      {"file.create", "创建文件"},
+      {"file.read", "读取文件"},
+      {"file.write", "写入文件"},
+      {"file.delete", "删除文件"},
+      {"file.clone", "克隆文件"},
+      {"dir.mkdir", "创建目录"},
+      {"dir.rmdir", "删除目录"},
+      {"snapshot.create", "创建快照"},
+      {"snapshot.rollback", "回滚快照"},
+      {"snapshot.delete", "删除快照"},
+      {"class.create", "创建身份类"},
+      {"class.grant", "授予身份类"},
+      {"class.revoke", "收回身份类"},
+      {"acl.grant", "授予 ACL"},
+      {"acl.revoke", "收回 ACL"},
+      {"trace.on", "开启 trace"},
+      {"trace.off", "关闭 trace"},
+      {"trace.clear", "清空 trace"},
+      {"command.error", "命令错误"}};
+  static const std::map<std::string, std::string> enMap = {
+      {"coord.session.start", "session start"},
+      {"coord.session.stop", "session stop"},
+      {"coord.lock.acquire", "acquire coord lock"},
+      {"coord.lock.release", "release coord lock"},
+      {"coord.lock.wait", "wait coord lock"},
+      {"coord.lock.deny", "coord lock busy"},
+      {"coord.lock.clear_stale", "clear stale locks"},
+      {"coord.epoch.bump", "bump volume epoch"},
+      {"coord.epoch.reload", "reload volume state"},
+      {"coord.signal.crash", "broadcast crash signal"},
+      {"coord.signal.receive", "receive crash signal"},
+      {"block.read", "read block layer"},
+      {"block.write", "write block layer"},
+      {"block.alloc", "allocate data block"},
+      {"block.retain", "retain block ref"},
+      {"block.release", "release block ref"},
+      {"journal.begin", "begin transaction"},
+      {"journal.record", "record tx image"},
+      {"journal.record.write", "write journal record"},
+      {"journal.commit", "commit transaction"},
+      {"journal.checkpoint", "checkpoint transaction"},
+      {"journal.clear", "clear journal"},
+      {"mount.missing", "volume missing"},
+      {"mount.open", "mount open"},
+      {"mount.close", "mount close"},
+      {"super.mount_state", "mount state change"},
+      {"recovery.begin", "recovery begin"},
+      {"recovery.redo", "recovery redo"},
+      {"recovery.ignore", "ignore uncommitted tx"},
+      {"recovery.end", "recovery complete"},
+      {"fsck.light", "light fsck"},
+      {"fsck.full", "full fsck"},
+      {"crash.point", "crash point"},
+      {"crash.inject", "trigger crash"},
+      {"path.lookup", "path lookup"},
+      {"auth.check", "permission check"},
+      {"inode.alloc", "allocate inode"},
+      {"inode.retain", "retain inode ref"},
+      {"inode.release", "release inode ref"},
+      {"inode.free", "free inode"},
+      {"inode.clone", "clone inode"},
+      {"inode.write_map", "update block map"},
+      {"inode.lock.acquire", "acquire inode lock"},
+      {"inode.lock.release", "release inode lock"},
+      {"inode.lock.conflict", "inode lock conflict"},
+      {"inode.lock.delete_pending", "mark delete pending"},
+      {"inode.chmod", "change mode"},
+      {"inode.chown", "change owner"},
+      {"inode.chclass", "change class"},
+      {"cow.break", "break COW sharing"},
+      {"cow.path_root", "copy shared root"},
+      {"cow.path_node", "copy shared path"},
+      {"session.login", "user login"},
+      {"session.chdir", "change directory"},
+      {"open.fd", "open file descriptor"},
+      {"open.close", "close file descriptor"},
+      {"file.create", "create file"},
+      {"file.read", "read file"},
+      {"file.write", "write file"},
+      {"file.delete", "delete file"},
+      {"file.clone", "clone file"},
+      {"dir.mkdir", "make directory"},
+      {"dir.rmdir", "remove directory"},
+      {"snapshot.create", "create snapshot"},
+      {"snapshot.rollback", "rollback snapshot"},
+      {"snapshot.delete", "delete snapshot"},
+      {"class.create", "create identity class"},
+      {"class.grant", "grant identity class"},
+      {"class.revoke", "revoke identity class"},
+      {"acl.grant", "grant ACL"},
+      {"acl.revoke", "revoke ACL"},
+      {"trace.on", "trace on"},
+      {"trace.off", "trace off"},
+      {"trace.clear", "clear trace"},
+      {"command.error", "command error"}};
+  const auto& map = th.lang == "zh" ? zhMap : enMap;
+  const auto it = map.find(type);
+  if (it != map.end()) return it->second;
+  auto fallback = type;
+  std::replace(fallback.begin(), fallback.end(), '.', ' ');
+  std::replace(fallback.begin(), fallback.end(), '_', ' ');
+  return fallback;
+}
+
+std::string traceObjectLabel(const Theme& th, const std::string& object) {
+  static const std::map<std::string, std::string> zhMap = {
+      {"tx", "事务锁"},
+      {"read", "读锁"},
+      {"mutex", "协调互斥"},
+      {"signal", "崩溃信号"},
+      {"volume", "虚拟卷"},
+      {"journal", "journal 区"},
+      {"superblock", "超级块"},
+      {"epoch", "卷版本"},
+      {"locks", "锁表"},
+      {"trace", "trace 开关"},
+      {"ring", "trace 缓冲区"},
+      {"before.command.dispatch", "命令分发前"}};
+  static const std::map<std::string, std::string> enMap = {
+      {"tx", "transaction lock"},
+      {"read", "read lock"},
+      {"mutex", "coord mutex"},
+      {"signal", "crash signal"},
+      {"volume", "virtual volume"},
+      {"journal", "journal area"},
+      {"superblock", "superblock"},
+      {"epoch", "volume epoch"},
+      {"locks", "lock table"},
+      {"trace", "trace switch"},
+      {"ring", "trace ring"},
+      {"before.command.dispatch", "before command dispatch"}};
+  const auto& map = th.lang == "zh" ? zhMap : enMap;
+  const auto it = map.find(object);
+  if (it != map.end()) return it->second;
+  return object;
+}
+
 std::string blockGlyph(std::uint32_t refcount) {
   if (refcount == 0) return "·";
   if (refcount == 1) return "░";
@@ -566,18 +761,12 @@ PromptRender renderPromptLine(const Theme& th, const TerminalMetrics& metrics, c
   PromptRender rendered;
   const int width = std::min(metrics.columns, metrics.compact ? metrics.columns : 112);
   const int left = std::max(0, (metrics.columns - width) / 2);
-  int cwdSlot = metrics.compact ? 16 : (metrics.wide ? 32 : 24);
-  const int userSlot = metrics.compact ? 8 : 10;
-  const int txSlot = metrics.compact ? 7 : 8;
-  cwdSlot = std::max(10, std::min(cwdSlot, width - userSlot - txSlot - 10));
+  const int cwdSlot = metrics.compact ? 18 : (metrics.wide ? 34 : 24);
+  const int userSlot = metrics.compact ? 10 : 14;
 
   const auto cwd = truncate(status.cwd, cwdSlot);
   const auto user = truncate(status.user, userSlot);
-  const auto tx = truncate("tx#" + std::to_string(status.txid), txSlot);
-  const auto cwdCell = padRight(cwd, cwdSlot);
-  const auto userCell = padRight(user, userSlot);
-  const auto txCell = padRight(tx, txSlot);
-  const std::string plainPrefix = "▌ " + cwdCell + " " + userCell + " " + txCell + " › ";
+  const std::string plainPrefix = cwd + " " + user + " > ";
   const int prefixWidth = displayWidth(plainPrefix);
   const int available = std::max(4, width - prefixWidth);
 
@@ -597,10 +786,10 @@ PromptRender renderPromptLine(const Theme& th, const TerminalMetrics& metrics, c
     return rendered;
   }
 
-  const auto prefix = th.panel2 + th.blue + "▌ " +
-                      panelAccent(th, th.amber, cwdCell) + " " +
-                      panelAccent(th, th.blue, userCell) + " " +
-                      th.dim + txCell + th.white + th.bold + " › " + th.normalWeight;
+  const auto prefix = th.panel2 +
+                      panelAccent(th, th.amber, cwd) + " " +
+                      panelAccent(th, th.blue, user) +
+                      th.white + th.bold + " > " + th.normalWeight;
   rendered.row = std::string(left, ' ') + prefix + th.white + visible +
                  std::string(std::max(0, available - commandWidth), ' ') + th.reset;
   return rendered;
@@ -763,8 +952,8 @@ std::string renderTraceTimeline(const Theme& th, const TerminalMetrics& metrics,
     line << color(th, toneCode(th, tone), branch) << " "
          << color(th, th.dim, "#" + std::to_string(e.seq)) << " "
          << color(th, th.amber, "tx" + std::to_string(e.txid)) << " "
-         << color(th, th.white, truncate(e.type, 24)) << " "
-         << color(th, th.gray, truncate(e.object, width - 58)) << " "
+         << color(th, th.white, truncate(traceTypeLabel(th, e.type), 24)) << " "
+         << color(th, th.gray, truncate(traceObjectLabel(th, e.object), width - 58)) << " "
          << badge(th, e.status, tone);
     lines.push_back(line.str());
   }
