@@ -116,6 +116,37 @@ std::string FileSystemKernel::currentUser() const {
   return activeUser_.empty() ? "-" : activeUser_;
 }
 
+void FileSystemKernel::setInteractiveUi(bool enabled, bool ansi) {
+  interactiveUi_ = enabled;
+  ansiUi_ = ansi;
+}
+
+ui::KernelStatus FileSystemKernel::status() const {
+  ui::KernelStatus s;
+  s.mounted = mounted_;
+  s.user = activeUser_.empty() ? "-" : activeUser_;
+  s.cwd = activeUser_.empty() || sessions_.find(activeUser_) == sessions_.end() ? "/" : sessions_.at(activeUser_).cwd;
+  s.mountState = mounted_ ? toString(state_.super.mountState) : "unmounted";
+  s.txid = mounted_ ? state_.super.nextTxid : 0;
+  s.inodes = state_.inodes.size();
+  s.inodeTotal = config::kInodeCount;
+  s.blocks = state_.blocks.size();
+  s.blockTotal = config::kTotalBlocks;
+  s.snapshots = state_.snapshots.size();
+  s.trace = trace_.enabled();
+  std::size_t open = 0;
+  for (const auto& [user, sess] : sessions_) {
+    open += sess.openFiles.size();
+    (void)user;
+  }
+  s.openFiles = open;
+  return s;
+}
+
+std::string FileSystemKernel::uiThemeName() const { return themeName_; }
+
+bool FileSystemKernel::uiAnsiEnabled() const { return ansiUi_; }
+
 std::string FileSystemKernel::prompt() const {
   if (!mounted_) return "scopefs[unmounted]> ";
   const auto user = activeUser_.empty() ? "-" : activeUser_;
@@ -133,7 +164,7 @@ CommandResult FileSystemKernel::err(ErrorCode code, const std::string& message, 
 
 bool FileSystemKernel::requiresLogin(const std::string& command) const {
   static const std::set<std::string> allowed = {
-      "help", "exit", "format", "login", "trace"};
+      "help", "exit", "format", "login", "trace", "theme"};
   if (allowed.count(command)) return false;
   return true;
 }
@@ -224,6 +255,7 @@ CommandResult FileSystemKernel::execute(const std::vector<std::string>& args, co
     if (cmd == "chclass") return cmdChclass(args);
     if (cmd == "fsck") return cmdFsck(args);
     if (cmd == "crash") return cmdCrash(args);
+    if (cmd == "theme") return cmdTheme(args);
     if (cmd == "help") return cmdHelp();
   } catch (const CrashException&) {
     throw;
@@ -1073,7 +1105,7 @@ CommandResult FileSystemKernel::cmdDir(const std::vector<std::string>& args) {
   std::string reason;
   if (!canTraverse(rp.canonical, true, &reason)) return err(ErrorCode::PermissionDenied, "access denied: " + reason);
   if (!authCheck(rp.inode, "r", rp.canonical, &reason)) return err(ErrorCode::PermissionDenied, "access denied: " + reason);
-  return ok(renderDir(rp.inode));
+  return ok(renderDir(rp.inode, rp.canonical));
 }
 
 CommandResult FileSystemKernel::cmdCreate(const std::vector<std::string>& args) {
@@ -1141,6 +1173,9 @@ CommandResult FileSystemKernel::cmdRead(const std::vector<std::string>& args) {
   const auto chunk = off >= data.size() ? "" : data.substr(off, size);
   it->second.offset += chunk.size();
   trace_.emit(0, "file.read", std::to_string(fd), std::to_string(off), std::to_string(it->second.offset), "read advances fd offset", "ok");
+  if (interactiveUi_) {
+    return ok(ui::renderReadData(ui::theme(ansiUi_, themeName_), ui::detectMetrics(), chunk, off, it->second.offset));
+  }
   return ok(chunk + "\n");
 }
 
@@ -1271,7 +1306,9 @@ CommandResult FileSystemKernel::cmdTrace(const std::vector<std::string>& args) {
   if (sub == "show") {
     const std::size_t n = args.size() >= 3 ? static_cast<std::size_t>(std::stoul(args[2])) : 0;
     std::ostringstream out;
-    renderTraceEvents(out, trace_.recent(n));
+    const auto events = trace_.recent(n);
+    if (interactiveUi_) return ok(ui::renderTraceTimeline(ui::theme(ansiUi_, themeName_), ui::detectMetrics(), events));
+    renderTraceEvents(out, events);
     return ok(out.str());
   }
   if (sub == "save") {
@@ -1283,6 +1320,9 @@ CommandResult FileSystemKernel::cmdTrace(const std::vector<std::string>& args) {
   if (sub == "replay") {
     const auto path = args.size() >= 3 ? args[2] : config::tracePath();
     auto events = TraceSink::load(path);
+    if (interactiveUi_) {
+      return ok(ui::renderTraceTimeline(ui::theme(ansiUi_, themeName_), ui::detectMetrics(), events, "Trace replay / read-only"));
+    }
     std::ostringstream out;
     out << "ScopeFS trace replay (" << events.size() << " events, read-only)\n";
     renderTraceEvents(out, events);
@@ -1291,6 +1331,7 @@ CommandResult FileSystemKernel::cmdTrace(const std::vector<std::string>& args) {
   if (sub == "step") {
     std::ostringstream out;
     const auto events = trace_.recent(1);
+    if (interactiveUi_) return ok(ui::renderTraceTimeline(ui::theme(ansiUi_, themeName_), ui::detectMetrics(), events, "Trace step"));
     renderTraceEvents(out, events);
     return ok(out.str());
   }
@@ -1313,6 +1354,18 @@ CommandResult FileSystemKernel::cmdSnapshot(const std::vector<std::string>& args
   if (args.size() < 2) return err(ErrorCode::InvalidArgument, "usage: snapshot create|list|show|diff|rollback|delete");
   const auto sub = lower(args[1]);
   if (sub == "list") {
+    if (interactiveUi_) {
+      std::vector<std::string> lines;
+      for (const auto& [name, c] : state_.classes) {
+        std::string line = name;
+        if (!c.parents.empty()) line += " inherits " + joinSet(c.parents, ',');
+        line += "  members=" + joinSet(c.members, ',');
+        line += c.grantOption ? "  grant-option" : "  no-grant";
+        if (!c.constraints.empty()) line += "  " + c.constraints;
+        lines.push_back(line);
+      }
+      return ok(ui::renderClassGraph(ui::theme(ansiUi_, themeName_), ui::detectMetrics(), lines));
+    }
     std::ostringstream out;
     out << "name                 root   gen   txid  created\n";
     for (const auto& [name, s] : state_.snapshots) {
@@ -1355,20 +1408,29 @@ CommandResult FileSystemKernel::cmdSnapshot(const std::vector<std::string>& args
     const auto fa = flattenTree(a->second.rootInode);
     const auto fb = flattenTree(b->second.rootInode);
     std::ostringstream out;
+    std::vector<std::string> diffLines;
     for (const auto& [path, inode] : fb) {
-      if (!fa.count(path)) out << "+ " << path << "\n";
+      if (!fa.count(path)) {
+        out << "+ " << path << "\n";
+        diffLines.push_back("+ " + path);
+      }
       else {
         const auto& ia = state_.inodes.at(fa.at(path));
         const auto& ib = state_.inodes.at(inode);
         if (ia.generation != ib.generation || ia.size != ib.size || csvNumbers(ia.blocks) != csvNumbers(ib.blocks)) {
           out << "~ " << path << "\n";
+          diffLines.push_back("~ " + path);
         }
       }
     }
     for (const auto& [path, inode] : fa) {
-      if (!fb.count(path)) out << "- " << path << "\n";
+      if (!fb.count(path)) {
+        out << "- " << path << "\n";
+        diffLines.push_back("- " + path);
+      }
       (void)inode;
     }
+    if (interactiveUi_) return ok(ui::renderSnapshotDiff(ui::theme(ansiUi_, themeName_), ui::detectMetrics(), diffLines));
     const auto text = out.str();
     return ok(text.empty() ? "no differences\n" : text);
   }
@@ -1448,11 +1510,16 @@ CommandResult FileSystemKernel::cmdClass(const std::vector<std::string>& args) {
   }
   if (sub == "tree") {
     std::ostringstream out;
+    std::vector<std::string> lines;
     for (const auto& [name, c] : state_.classes) {
       out << name;
       if (!c.parents.empty()) out << " inherits " << joinSet(c.parents, ',');
       out << "\n";
+      std::string line = name;
+      if (!c.parents.empty()) line += " inherits " + joinSet(c.parents, ',');
+      lines.push_back(line);
     }
+    if (interactiveUi_) return ok(ui::renderClassGraph(ui::theme(ansiUi_, themeName_), ui::detectMetrics(), lines));
     return ok(out.str());
   }
   if (sub == "create") {
@@ -1535,10 +1602,15 @@ CommandResult FileSystemKernel::cmdAcl(const std::vector<std::string>& args) {
     if (!canTraverse(rp.canonical, false, &reason)) return err(ErrorCode::PermissionDenied, "access denied: " + reason);
     std::ostringstream out;
     out << "ACL for " << rp.canonical << " inode=" << rp.inode << "\n";
+    std::vector<std::string> lines;
+    lines.push_back(rp.canonical + " inode=#" + std::to_string(rp.inode));
     for (const auto& acl : state_.inodes[rp.inode].acl) {
       out << acl.subject << " rights=" << acl.rights << " constraints=" << acl.constraints
           << " gen=" << acl.generation << "\n";
+      lines.push_back(acl.subject + " rights=" + acl.rights + " constraints=" + acl.constraints +
+                      " gen=" + std::to_string(acl.generation));
     }
+    if (interactiveUi_) return ok(ui::renderAclGraph(ui::theme(ansiUi_, themeName_), ui::detectMetrics(), "ACL graph", lines));
     return ok(out.str());
   }
   if (sub == "grant") {
@@ -1662,6 +1734,19 @@ CommandResult FileSystemKernel::cmdCrash(const std::vector<std::string>& args) {
   return err(ErrorCode::InvalidArgument, "usage: crash now|after <event>|before <event>|at <seq>|clear");
 }
 
+CommandResult FileSystemKernel::cmdTheme(const std::vector<std::string>& args) {
+  if (args.size() < 2) {
+    return ok("theme " + themeName_ + "\n");
+  }
+  const auto name = lower(args[1]);
+  if (name != "scope-dark" && name != "amber" && name != "blue" && name != "mono") {
+    return err(ErrorCode::InvalidArgument, "usage: theme scope-dark|amber|blue|mono");
+  }
+  themeName_ = name == "amber" ? "scope-dark" : name;
+  if (name == "mono") ansiUi_ = false;
+  return ok("theme set to " + name + "\n");
+}
+
 CommandResult FileSystemKernel::cmdHelp() {
   std::ostringstream out;
   out << "ScopeFS commands\n"
@@ -1671,12 +1756,34 @@ CommandResult FileSystemKernel::cmdHelp() {
       << "  scope [inode|block|journal|open|tree] | map [blocks|inode|journal|refcount|owner]\n"
       << "  snapshot create/list/show/diff/rollback/delete | clone <src> <dst>\n"
       << "  class create/grant/revoke/list/tree | chmod/chown/chclass | acl show/grant/revoke\n"
-      << "  crash now/after/before/at/clear | fsck [--repair]\n";
+      << "  crash now/after/before/at/clear | fsck [--repair] | theme scope-dark|blue|mono\n";
   return ok(out.str());
 }
 
-std::string FileSystemKernel::renderDir(std::uint32_t inodeId) const {
+std::string FileSystemKernel::renderDir(std::uint32_t inodeId, const std::string& path) const {
   const auto& dir = state_.inodes.at(inodeId);
+  if (interactiveUi_) {
+    std::vector<ui::DirRow> rows;
+    for (const auto& [name, de] : dir.entries) {
+      const auto it = state_.inodes.find(de.inode);
+      if (it == state_.inodes.end()) continue;
+      const auto& n = it->second;
+      ui::DirRow row;
+      row.name = name;
+      row.type = nodeMarker(n.type);
+      row.owner = n.owner;
+      row.klass = n.klass;
+      row.mode = modeString(n.mode, n.type == NodeType::Directory);
+      row.inode = n.id;
+      row.generation = n.generation;
+      row.size = n.size;
+      row.blockCount = n.blocks.size();
+      row.refcount = n.refcount;
+      row.shared = n.refcount > 1;
+      rows.push_back(row);
+    }
+    return ui::renderDir(ui::theme(ansiUi_, themeName_), ui::detectMetrics(), path, rows);
+  }
   std::ostringstream out;
   out << "╭────────────────────────────────────────────────────────────────────────────────────────╮\n";
   out << "│ name                 type    size    owner      class      mode        inode blocks     │\n";
@@ -1700,11 +1807,45 @@ std::string FileSystemKernel::renderDir(std::uint32_t inodeId) const {
 
 std::string FileSystemKernel::renderScope(const std::string& what) const {
   std::ostringstream out;
+  const auto th = ui::theme(ansiUi_, themeName_);
+  const auto metrics = ui::detectMetrics();
   if (what == "tree") {
     std::set<std::uint32_t> seen;
-    return renderTree(state_.super.activeRoot, "", "/", seen);
+    const auto tree = renderTree(state_.super.activeRoot, "", "/", seen);
+    if (interactiveUi_) {
+      std::vector<std::string> lines;
+      std::istringstream in(tree);
+      std::string line;
+      while (std::getline(in, line)) lines.push_back(line);
+      return ui::renderTree(th, metrics, lines);
+    }
+    return tree;
   }
   if (what == "inode") {
+    if (interactiveUi_) {
+      std::vector<ui::InodeRow> inodeRows;
+      for (const auto& [id, n] : state_.inodes) {
+        ui::InodeRow row;
+        row.inode = id;
+        row.type = nodeMarker(n.type);
+        row.generation = n.generation;
+        row.refcount = n.refcount;
+        row.openCount = n.openCount;
+        row.owner = n.owner;
+        row.klass = n.klass;
+        row.size = n.size;
+        row.blockCount = n.blocks.size();
+        row.pending = n.deletePending;
+        inodeRows.push_back(row);
+      }
+      std::sort(inodeRows.begin(), inodeRows.end(), [](const auto& a, const auto& b) {
+        if (a.openCount != b.openCount) return a.openCount > b.openCount;
+        if (a.refcount != b.refcount) return a.refcount > b.refcount;
+        return a.inode < b.inode;
+      });
+      if (inodeRows.size() > 10) inodeRows.resize(10);
+      return ui::renderScope(th, metrics, status(), inodeRows, {{"view", "inode table"}, {"mode", "hot first"}});
+    }
     out << "inode type    gen ref open owner      class      size blocks pending\n";
     for (const auto& [id, n] : state_.inodes) {
       out << std::setw(5) << id << " " << std::left << std::setw(7) << nodeMarker(n.type)
@@ -1718,11 +1859,28 @@ std::string FileSystemKernel::renderScope(const std::string& what) const {
   if (what == "block") return renderMap("refcount");
   if (what == "journal") {
     const auto lines = device_.readJournal();
+    if (interactiveUi_) {
+      std::vector<std::string> body;
+      body.push_back("journal lines: " + std::to_string(lines.size()));
+      for (const auto& l : lines) body.push_back(clip(l, 110));
+      return ui::box(th, "Journal timeline", body, std::min(metrics.columns, metrics.wide ? 132 : 112), "green") + "\n";
+    }
     out << "journal lines: " << lines.size() << "\n";
     for (const auto& l : lines) out << clip(l, 120) << "\n";
     return out.str();
   }
   if (what == "open") {
+    if (interactiveUi_) {
+      std::vector<std::string> body;
+      for (const auto& [user, sess] : sessions_) {
+        for (const auto& [fd, of] : sess.openFiles) {
+          body.push_back(user + " fd=" + std::to_string(fd) + " inode=#" + std::to_string(of.inode) +
+                         " offset=" + std::to_string(of.offset) + " " + of.flags + " " + of.path);
+        }
+      }
+      if (body.empty()) body.push_back("no open file descriptors");
+      return ui::box(th, "Open file tables", body, std::min(metrics.columns, metrics.wide ? 132 : 112), "blue") + "\n";
+    }
     out << "user fd inode offset flags path\n";
     for (const auto& [user, sess] : sessions_) {
       for (const auto& [fd, of] : sess.openFiles) {
@@ -1734,6 +1892,30 @@ std::string FileSystemKernel::renderScope(const std::string& what) const {
       if (count > 0) out << "inode " << inode << " refs " << count << "\n";
     }
     return out.str();
+  }
+  if (interactiveUi_) {
+    std::vector<ui::InodeRow> hot;
+    for (const auto& [id, n] : state_.inodes) {
+      if (n.refcount > 1 || n.openCount > 0 || n.deletePending) {
+        ui::InodeRow row;
+        row.inode = id;
+        row.type = nodeMarker(n.type);
+        row.generation = n.generation;
+        row.refcount = n.refcount;
+        row.openCount = n.openCount;
+        row.owner = n.owner;
+        row.klass = n.klass;
+        row.size = n.size;
+        row.blockCount = n.blocks.size();
+        row.pending = n.deletePending;
+        hot.push_back(row);
+      }
+    }
+    if (hot.size() > 6) hot.resize(6);
+    return ui::renderScope(th, metrics, status(), hot,
+                           {{"cwd", activeUser_.empty() ? "/" : session().cwd},
+                            {"classes", activeUser_.empty() ? "-" : joinSet(effectiveClasses(activeUser_, session().cwd), ',')},
+                            {"trace", trace_.enabled() ? "on" : "off"}});
   }
   out << "╭──────── ScopeFS ────────╮\n";
   out << "│ mount     " << std::setw(12) << toString(state_.super.mountState) << " │\n";
@@ -1763,6 +1945,19 @@ std::string FileSystemKernel::renderTree(std::uint32_t inode, const std::string&
 }
 
 std::string FileSystemKernel::renderMap(const std::string& what) const {
+  if (interactiveUi_) {
+    std::vector<ui::MapCell> cells;
+    cells.reserve(state_.blocks.size());
+    for (const auto& [id, block] : state_.blocks) {
+      ui::MapCell cell;
+      cell.block = id;
+      cell.refcount = block.refcount;
+      cell.ownerInode = block.ownerInode;
+      cell.flags = block.flags;
+      cells.push_back(cell);
+    }
+    return ui::renderMap(ui::theme(ansiUi_, themeName_), ui::detectMetrics(), what, cells, config::kTotalBlocks);
+  }
   std::ostringstream out;
   out << "ScopeFS disk map: " << what << "\n";
   const std::uint32_t width = 96;

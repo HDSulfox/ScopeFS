@@ -13,6 +13,7 @@ add_executable(scopefs
   src/kernel.cpp
   src/shell.cpp
   src/terminal.cpp
+  src/ui.cpp
 )
 
 target_include_directories(scopefs PRIVATE include)

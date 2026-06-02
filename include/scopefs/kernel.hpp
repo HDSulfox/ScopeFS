@@ -9,6 +9,7 @@
 
 #include "scopefs/block_device.hpp"
 #include "scopefs/model.hpp"
+#include "scopefs/ui.hpp"
 
 namespace scopefs {
 
@@ -50,6 +51,10 @@ class FileSystemKernel {
   void boot();
   void unmountClean();
   CommandResult execute(const std::vector<std::string>& args, const std::string& rawCommand);
+  void setInteractiveUi(bool enabled, bool ansi);
+  ui::KernelStatus status() const;
+  std::string uiThemeName() const;
+  bool uiAnsiEnabled() const;
   TraceSink& trace();
   std::string prompt() const;
   std::string currentUser() const;
@@ -79,6 +84,9 @@ class FileSystemKernel {
   std::string activeUser_;
   bool mounted_ = false;
   bool dirty_ = false;
+  bool interactiveUi_ = false;
+  bool ansiUi_ = false;
+  std::string themeName_ = "scope-dark";
   std::string crashMode_;
   std::string crashEvent_;
   std::uint64_t crashSeq_ = 0;
@@ -154,9 +162,10 @@ class FileSystemKernel {
   CommandResult cmdChclass(const std::vector<std::string>& args);
   CommandResult cmdFsck(const std::vector<std::string>& args);
   CommandResult cmdCrash(const std::vector<std::string>& args);
+  CommandResult cmdTheme(const std::vector<std::string>& args);
   CommandResult cmdHelp();
 
-  std::string renderDir(std::uint32_t inode) const;
+  std::string renderDir(std::uint32_t inode, const std::string& path) const;
   std::string renderScope(const std::string& what) const;
   std::string renderTree(std::uint32_t inode, const std::string& prefix, const std::string& name, std::set<std::uint32_t>& seen) const;
   std::string renderMap(const std::string& what) const;

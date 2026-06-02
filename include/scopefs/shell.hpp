@@ -7,6 +7,7 @@
 
 #include "scopefs/kernel.hpp"
 #include "scopefs/terminal.hpp"
+#include "scopefs/ui.hpp"
 
 namespace scopefs {
 

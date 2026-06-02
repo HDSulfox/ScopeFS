@@ -1,0 +1,34 @@
+format
+login root root
+scope
+mkdir /studio
+mkdir /studio/assets
+create /studio/assets/manifest 0644
+open /studio/assets/manifest rw
+write 3 ScopeFS terminal-first visual showcase with inode block journal snapshot acl
+read 3 16
+close 3
+dir /studio/assets
+snapshot create ui_base
+clone /studio/assets/manifest /studio/assets/manifest.copy
+open /studio/assets/manifest.copy append
+write 4  + COW branch
+close 4
+snapshot create ui_after
+snapshot diff ui_base ui_after
+scope tree
+scope inode
+map refcount
+trace show 16
+acl grant /studio usr1 x path_prefix=/studio
+acl grant /studio/assets/manifest usr1 r path_prefix=/studio
+acl show /studio/assets/manifest
+class create visual-reviewers
+class grant visual-reviewers to usr1 with grant option path_prefix=/studio
+class tree
+theme blue
+scope
+theme mono
+trace show 5
+fsck
+exit

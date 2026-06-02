@@ -58,15 +58,22 @@ std::vector<std::string> tokenize(const std::string& line) {
 Shell::Shell(FileSystemKernel& kernel) : kernel_(kernel) {}
 
 int Shell::run(std::istream& in, std::ostream& out, bool interactive, const TerminalCaps& caps) {
+  kernel_.setInteractiveUi(interactive, caps.ansi);
   if (interactive) banner(out, caps);
   std::string line;
   while (true) {
     if (interactive) {
-      out << kernel_.prompt();
+      out << ui::renderPrompt(ui::theme(kernel_.uiAnsiEnabled(), kernel_.uiThemeName()), ui::detectMetrics(), kernel_.status());
       out.flush();
     }
     if (!std::getline(in, line)) break;
     if (!line.empty() && line.back() == '\r') line.pop_back();
+    if (line.size() >= 3 &&
+        static_cast<unsigned char>(line[0]) == 0xEF &&
+        static_cast<unsigned char>(line[1]) == 0xBB &&
+        static_cast<unsigned char>(line[2]) == 0xBF) {
+      line.erase(0, 3);
+    }
     auto args = tokenize(line);
     if (args.empty()) continue;
     const auto cmd = args[0];
@@ -78,11 +85,11 @@ int Shell::run(std::istream& in, std::ostream& out, bool interactive, const Term
       out << "\n";
     }
     auto result = kernel_.execute(args, line);
-    out << result;
-    if (interactive && result.code == ErrorCode::Ok && !result.output.empty() &&
-        line.rfind("trace show", 0) != 0 && line.rfind("scope", 0) != 0) {
-      auto summary = kernel_.execute({"trace", "show", "5"}, "trace show 5");
-      out << summary.output;
+    if (interactive) {
+      out << ui::renderResult(ui::theme(kernel_.uiAnsiEnabled(), kernel_.uiThemeName()), ui::detectMetrics(), line, result.code == ErrorCode::Ok,
+                              errorCodeName(result.code), result.message, result.output);
+    } else {
+      out << result;
     }
   }
   return 0;
@@ -90,31 +97,7 @@ int Shell::run(std::istream& in, std::ostream& out, bool interactive, const Term
 
 void Shell::banner(std::ostream& out, const TerminalCaps& caps) const {
   clearInteractiveScreen(out, caps);
-  if (caps.ansi) {
-    out << "\x1b[48;2;18;18;20m\x1b[38;2;224;224;224m";
-  }
-  out << "                                                                                \n";
-  out << "        ███████╗ ██████╗ ██████╗ ██████╗ ███████╗███████╗███████╗             \n";
-  out << "        ██╔════╝██╔════╝██╔═══██╗██╔══██╗██╔════╝██╔════╝██╔════╝             \n";
-  out << "        ███████╗██║     ██║   ██║██████╔╝█████╗  █████╗  ███████╗             \n";
-  out << "        ╚════██║██║     ██║   ██║██╔═══╝ ██╔══╝  ██╔══╝  ╚════██║             \n";
-  out << "        ███████║╚██████╗╚██████╔╝██║     ███████╗██║     ███████║             \n";
-  out << "        ╚══════╝ ╚═════╝ ╚═════╝ ╚═╝     ╚══════╝╚═╝     ╚══════╝             \n";
-  out << "                                                                                \n";
-  if (caps.ansi) {
-    out << "\x1b[48;2;35;35;38m\x1b[38;2;235;235;235m";
-  }
-  out << "  ╭─ ScopeFS Workbench ─────────────────────────────────────────────────────╮  \n";
-  out << "  │  observable C++17 teaching file system: inode · journal · COW · ACL     │  \n";
-  out << "  │  try: format  →  login root root  →  qa/demo.scope in --script mode     │  \n";
-  out << "  ╰─────────────────────────────────────────────────────────────────────────╯  \n";
-  if (caps.ansi) {
-    out << "\x1b[48;2;24;24;26m\x1b[38;2;190;190;190m";
-  }
-  out << "                                                                                \n";
-  out << "  command input is below; outputs render as Unicode panels and heatmaps.        \n";
-  out << "                                                                                \n";
-  if (caps.ansi) out << "\x1b[0m";
+  out << ui::renderDashboard(ui::theme(caps.ansi), ui::detectMetrics(), kernel_.status());
 }
 
 std::string Shell::readPassword() {

@@ -148,6 +148,12 @@ Run all scripted checks:
 powershell -ExecutionPolicy Bypass -File qa\run_all.ps1
 ```
 
+Run the interactive UI width smoke checks:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File qa\ui_width_smoke.ps1
+```
+
 The scripts cover normal operations, permissions, COW snapshots, and crash recovery around commit boundaries.
 
 ## Notes
