@@ -127,16 +127,6 @@ KeyPress readEditorKey() {
 #endif
 }
 
-std::string commonPrefix(std::vector<std::string> values) {
-  if (values.empty()) return "";
-  std::sort(values.begin(), values.end());
-  std::string prefix = values.front();
-  for (const auto& value : values) {
-    while (!prefix.empty() && value.rfind(prefix, 0) != 0) prefix.pop_back();
-  }
-  return prefix;
-}
-
 bool isPathCommand(const std::string& cmd, std::size_t tokenIndex, const std::vector<std::string>& prior) {
   static const std::set<std::string> firstPath = {
       "cd", "chdir", "dir", "ls", "mkdir", "rmdir", "create", "open", "delete", "rm", "truncate", "chmod", "chown", "chclass"};
@@ -205,11 +195,11 @@ int Shell::run(std::istream& in, std::ostream& out, bool interactive, const Term
     if (useEditor) {
       line = readInteractiveLine(out, caps);
     } else if (interactive) {
-      out << ui::renderPrompt(ui::theme(kernel_.uiAnsiEnabled(), kernel_.uiThemeName()), ui::detectMetrics(), kernel_.status());
+      out << ui::renderPrompt(ui::theme(kernel_.uiAnsiEnabled(), kernel_.uiThemeName(), kernel_.uiLanguageName()), ui::detectMetrics(), kernel_.status());
       out.flush();
       if (!std::getline(in, line)) break;
       if (interactive && kernel_.uiAnsiEnabled()) {
-        out << ui::theme(true, kernel_.uiThemeName()).reset;
+        out << ui::theme(true, kernel_.uiThemeName(), kernel_.uiLanguageName()).reset;
       }
     } else {
       if (!std::getline(in, line)) break;
@@ -233,7 +223,7 @@ int Shell::run(std::istream& in, std::ostream& out, bool interactive, const Term
     }
     auto result = kernel_.execute(args, line);
     if (interactive) {
-      out << ui::renderResult(ui::theme(kernel_.uiAnsiEnabled(), kernel_.uiThemeName()), ui::detectMetrics(), line, result.code == ErrorCode::Ok,
+      out << ui::renderResult(ui::theme(kernel_.uiAnsiEnabled(), kernel_.uiThemeName(), kernel_.uiLanguageName()), ui::detectMetrics(), line, result.code == ErrorCode::Ok,
                               errorCodeName(result.code), result.message, result.output);
     } else {
       out << result;
@@ -251,14 +241,19 @@ std::string Shell::readInteractiveLine(std::ostream& out, const TerminalCaps& ca
   std::string draft;
   std::size_t cursor = 0;
   std::size_t historyIndex = history_.size();
+  std::vector<std::string> tabCandidates;
+  std::string tabPrefixLine;
+  std::size_t tabStart = 0;
+  std::size_t tabIndex = 0;
   redrawInteractiveLine(out, line, cursor);
   while (true) {
     const auto key = readEditorKey();
     bool redraw = true;
+    if (key.key != EditorKey::Tab) tabCandidates.clear();
     switch (key.key) {
       case EditorKey::Enter:
         redrawInteractiveLine(out, line, line.size());
-        if (kernel_.uiAnsiEnabled()) out << ui::theme(true, kernel_.uiThemeName()).reset;
+        if (kernel_.uiAnsiEnabled()) out << ui::theme(true, kernel_.uiThemeName(), kernel_.uiLanguageName()).reset;
         out << "\n";
         if (!line.empty() && (history_.empty() || history_.back() != line)) {
           history_.push_back(line);
@@ -269,12 +264,12 @@ std::string Shell::readInteractiveLine(std::ostream& out, const TerminalCaps& ca
         line.clear();
         cursor = 0;
         redrawInteractiveLine(out, line, cursor);
-        if (kernel_.uiAnsiEnabled()) out << ui::theme(true, kernel_.uiThemeName()).reset;
+        if (kernel_.uiAnsiEnabled()) out << ui::theme(true, kernel_.uiThemeName(), kernel_.uiLanguageName()).reset;
         out << "^C\n";
         return "";
       case EditorKey::CtrlD:
         if (line.empty()) {
-          if (kernel_.uiAnsiEnabled()) out << ui::theme(true, kernel_.uiThemeName()).reset;
+          if (kernel_.uiAnsiEnabled()) out << ui::theme(true, kernel_.uiThemeName(), kernel_.uiLanguageName()).reset;
           out << "\n";
           return "exit";
         }
@@ -320,21 +315,22 @@ std::string Shell::readInteractiveLine(std::ostream& out, const TerminalCaps& ca
         break;
       case EditorKey::Tab: {
         std::size_t tokenStart = cursor;
-        auto candidates = completionCandidates(line, cursor, &tokenStart);
-        if (candidates.empty()) {
-          out << '\a';
+        const bool sameTabContext = !tabCandidates.empty() && tabStart <= line.size() && line.substr(0, tabStart) == tabPrefixLine;
+        if (!sameTabContext) {
+          tabCandidates = completionCandidates(line, cursor, &tokenStart);
+          tabStart = tokenStart;
+          tabPrefixLine = line.substr(0, tokenStart);
+          tabIndex = 0;
+        } else {
+          tabIndex = (tabIndex + 1) % tabCandidates.size();
+        }
+        if (tabCandidates.empty()) {
           redraw = false;
           break;
         }
-        const auto current = line.substr(tokenStart, cursor - tokenStart);
-        auto replacement = candidates.size() == 1 ? candidates.front() : commonPrefix(candidates);
-        if (replacement.size() > current.size()) {
-          line.replace(tokenStart, cursor - tokenStart, replacement);
-          cursor = tokenStart + replacement.size();
-        } else {
-          out << '\a';
-          redraw = false;
-        }
+        const auto replacement = tabCandidates[tabIndex % tabCandidates.size()];
+        line.replace(tabStart, cursor - tabStart, replacement);
+        cursor = tabStart + replacement.size();
         break;
       }
       case EditorKey::Character:
@@ -352,7 +348,7 @@ std::string Shell::readInteractiveLine(std::ostream& out, const TerminalCaps& ca
 void Shell::redrawInteractiveLine(std::ostream& out, const std::string& line, std::size_t cursor) const {
   const auto metrics = ui::detectMetrics();
   const auto status = kernel_.status();
-  const auto th = ui::theme(kernel_.uiAnsiEnabled(), kernel_.uiThemeName());
+  const auto th = ui::theme(kernel_.uiAnsiEnabled(), kernel_.uiThemeName(), kernel_.uiLanguageName());
   const int width = std::min(metrics.columns, metrics.compact ? metrics.columns : 112);
   const int left = std::max(0, (metrics.columns - width) / 2);
   const auto leftInfo = " " + ui::truncate(status.cwd, std::max(12, width / 3)) + " ";
@@ -378,16 +374,17 @@ void Shell::redrawInteractiveLine(std::ostream& out, const std::string& line, st
   }
 
   const auto prefix = th.panel2 + th.blue + "▌" + th.amber + leftInfo + th.dim + midPadded + th.white + " › ";
-  out << "\r" << std::string(left, ' ') << prefix << visible
+  out << "\x1b[?25l\r" << std::string(left, ' ') << prefix << visible
       << std::string(std::max(0, available - commandWidth), ' ') << th.reset << "\r";
   if (cursorColumn > 0) out << "\x1b[" << cursorColumn << "C";
+  out << "\x1b[?25h";
   out.flush();
 }
 
 bool Shell::moveInteractiveCursor(std::ostream& out, const std::string& line, std::size_t oldCursor, std::size_t newCursor) const {
   const auto metrics = ui::detectMetrics();
   const auto status = kernel_.status();
-  const auto th = ui::theme(kernel_.uiAnsiEnabled(), kernel_.uiThemeName());
+  const auto th = ui::theme(kernel_.uiAnsiEnabled(), kernel_.uiThemeName(), kernel_.uiLanguageName());
   if (!th.ansi || th.mono) return false;
 
   const int width = std::min(metrics.columns, metrics.compact ? metrics.columns : 112);
@@ -428,7 +425,7 @@ std::vector<std::string> Shell::completionCandidates(const std::string& line, st
       "login", "logout", "whoami", "format", "mkdir", "rmdir", "chdir", "cd", "dir", "ls",
       "create", "open", "read", "write", "close", "delete", "rm", "truncate", "trace", "scope",
       "map", "snapshot", "clone", "class", "chmod", "chown", "chclass", "acl", "fsck", "crash",
-      "theme", "help", "exit"};
+      "theme", "lang", "help", "exit"};
   static const std::map<std::string, std::vector<std::string>> subcommands = {
       {"map", {"blocks", "inode", "journal", "refcount", "owner"}},
       {"scope", {"inode", "block", "journal", "open", "tree"}},
@@ -438,6 +435,7 @@ std::vector<std::string> Shell::completionCandidates(const std::string& line, st
       {"acl", {"show", "grant", "revoke"}},
       {"crash", {"now", "after", "before", "at", "clear"}},
       {"theme", {"scope-dark", "blue", "mono"}},
+      {"lang", {"zh", "en"}},
       {"open", {"r", "w", "rw", "append", "truncate"}},
       {"fsck", {"--repair"}}};
 
@@ -470,7 +468,7 @@ std::vector<std::string> Shell::completionCandidates(const std::string& line, st
 
 void Shell::banner(std::ostream& out, const TerminalCaps& caps) const {
   clearInteractiveScreen(out, caps);
-  out << ui::renderDashboard(ui::theme(caps.ansi), ui::detectMetrics(), kernel_.status());
+  out << ui::renderDashboard(ui::theme(caps.ansi, kernel_.uiThemeName(), kernel_.uiLanguageName()), ui::detectMetrics(), kernel_.status());
 }
 
 std::string Shell::readPassword() {

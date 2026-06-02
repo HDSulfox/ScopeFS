@@ -21,6 +21,7 @@ struct TerminalMetrics {
 struct Theme {
   bool ansi = true;
   bool mono = false;
+  std::string lang = "zh";
   std::string reset;
   std::string bg;
   std::string panel;
@@ -87,7 +88,8 @@ struct MapCell {
 };
 
 TerminalMetrics detectMetrics();
-Theme theme(bool ansi, const std::string& name = "scope-dark");
+Theme theme(bool ansi, const std::string& name = "scope-dark", const std::string& lang = "zh");
+std::string text(const Theme& th, const std::string& key);
 
 int displayWidth(const std::string& text);
 std::string stripAnsi(const std::string& text);

@@ -21,6 +21,88 @@ namespace {
 
 std::string esc(const std::string& code) { return "\x1b[" + code + "m"; }
 
+std::string zh(const std::string& key) {
+  static const std::map<std::string, std::string> dict = {
+      {"command_focus", "命令焦点"},
+      {"command_surface", "命令工作区"},
+      {"observable_kernel", "可观测 inode/block/journal/COW 内核"},
+      {"terminal_first", "终端优先"},
+      {"volume", "卷状态"},
+      {"session", "会话"},
+      {"observability", "观测"},
+      {"mount", "挂载"},
+      {"blocks", "块"},
+      {"user", "用户"},
+      {"open", "打开"},
+      {"trace", "trace"},
+      {"snap", "快照"},
+      {"tips", "提示"},
+      {"tab_commands", "Tab 补全"},
+      {"palette", "命令面板"},
+      {"directory", "目录"},
+      {"entries", "项"},
+      {"gen", "gen"},
+      {"ref", "ref"},
+      {"size", "大小"},
+      {"kernel", "内核"},
+      {"capacity", "容量"},
+      {"hot_inodes", "热点 inode"},
+      {"no_inode_activity", "暂无 inode 活动"},
+      {"tree_shared", "目录树 / 共享引用"},
+      {"disk_map", "磁盘图"},
+      {"trace_timeline", "Trace 时间线"},
+      {"trace_replay", "Trace 回放 / 只读"},
+      {"trace_step", "Trace 单步"},
+      {"snapshot_diff", "快照 diff"},
+      {"class_graph", "身份类图"},
+      {"acl_graph", "ACL 图"},
+      {"read_result", "读取结果"},
+      {"offset", "偏移"}};
+  const auto it = dict.find(key);
+  return it == dict.end() ? key : it->second;
+}
+
+std::string en(const std::string& key) {
+  static const std::map<std::string, std::string> dict = {
+      {"command_focus", "command focus"},
+      {"command_surface", "command surface"},
+      {"observable_kernel", "observable inode/block/journal/COW kernel"},
+      {"terminal_first", "terminal-first"},
+      {"volume", "Volume"},
+      {"session", "Session"},
+      {"observability", "Observability"},
+      {"mount", "mount"},
+      {"blocks", "blocks"},
+      {"user", "user"},
+      {"open", "open"},
+      {"trace", "trace"},
+      {"snap", "snap"},
+      {"tips", "tips"},
+      {"tab_commands", "tab commands"},
+      {"palette", "ctrl+p palette"},
+      {"directory", "Directory"},
+      {"entries", "entries"},
+      {"gen", "gen"},
+      {"ref", "ref"},
+      {"size", "size"},
+      {"kernel", "Kernel"},
+      {"capacity", "Capacity"},
+      {"hot_inodes", "Hot inodes"},
+      {"no_inode_activity", "no inode activity"},
+      {"tree_shared", "Tree / shared references"},
+      {"disk_map", "Disk map"},
+      {"trace_timeline", "Trace timeline"},
+      {"trace_replay", "Trace replay / read-only"},
+      {"trace_step", "Trace step"},
+      {"snapshot_diff", "Snapshot diff"},
+      {"class_graph", "Class graph"},
+      {"acl_graph", "ACL graph"},
+      {"read_result", "Read result"},
+      {"offset", "offset"}};
+  const auto it = dict.find(key);
+  return it == dict.end() ? key : it->second;
+}
+
 std::string toneCode(const Theme& th, const std::string& tone) {
   if (tone == "amber") return th.amber;
   if (tone == "blue") return th.blue;
@@ -229,9 +311,10 @@ TerminalMetrics detectMetrics() {
   return metrics;
 }
 
-Theme theme(bool ansi, const std::string& name) {
+Theme theme(bool ansi, const std::string& name, const std::string& lang) {
   Theme th;
   th.ansi = ansi;
+  th.lang = lang == "en" ? "en" : "zh";
   th.mono = name == "mono" || !ansi;
   if (!ansi) return th;
   th.reset = esc("0");
@@ -253,6 +336,10 @@ Theme theme(bool ansi, const std::string& name) {
     th.border = esc("38;2;80;116;150");
   }
   return th;
+}
+
+std::string text(const Theme& th, const std::string& key) {
+  return th.lang == "en" ? en(key) : zh(key);
 }
 
 int displayWidth(const std::string& text) {
@@ -403,50 +490,58 @@ std::string renderDashboard(const Theme& th, const TerminalMetrics& metrics, con
   const int width = std::min(metrics.columns, metrics.wide ? 132 : 112);
   const int left = std::max(0, (metrics.columns - width) / 2);
   const std::string indent(left, ' ');
-  const std::vector<std::string> logoLarge = {
-      "███████╗ ██████╗ ██████╗ ██████╗ ███████╗███████╗███████╗",
-      "██╔════╝██╔════╝██╔═══██╗██╔══██╗██╔════╝██╔════╝██╔════╝",
-      "███████╗██║     ██║   ██║██████╔╝█████╗  █████╗  ███████╗",
-      "╚════██║██║     ██║   ██║██╔═══╝ ██╔══╝  ██╔══╝  ╚════██║",
-      "███████║╚██████╗╚██████╔╝██║     ███████╗██║     ███████║",
-      "╚══════╝ ╚═════╝ ╚═════╝ ╚═╝     ╚══════╝╚═╝     ╚══════╝"};
+  const std::vector<std::pair<std::string, std::string>> logoLarge = {
+      {"██████  ██████  ██████  ██████  ██████", "██████ ██████"},
+      {"██      ██      ██  ██  ██  ██  ██    ", "██     ██    "},
+      {"██████  ██      ██  ██  ██████  █████ ", "████   ██████"},
+      {"    ██  ██      ██  ██  ██      ██    ", "██         ██"},
+      {"██████  ██████  ██████  ██      ██████", "██     ██████"},
+      {"  ░░░░    ░░░░    ░░░░  ░░        ░░░░", "░░       ░░░░"}};
   std::ostringstream out;
   if (th.ansi) out << th.bg;
   out << "\n";
   if (metrics.compact) {
-    out << indent << color(th, th.amber, center("SCOPEFS", width)) << "\n";
+    const auto scope = color(th, th.gray, "Scope");
+    const auto fs = color(th, th.white, "FS");
+    out << indent << center(scope + fs, width) << "\n";
   } else {
-    for (const auto& line : logoLarge) out << indent << color(th, th.white, center(line, width)) << "\n";
+    for (const auto& [scope, fs] : logoLarge) {
+      const auto plain = scope + "  " + fs;
+      const int logoLeft = std::max(0, (width - displayWidth(plain)) / 2);
+      out << indent << std::string(logoLeft, ' ')
+          << color(th, scope.find("░") != std::string::npos ? th.dim : th.gray, scope)
+          << "  " << color(th, fs.find("░") != std::string::npos ? th.dim : th.white, fs) << "\n";
+    }
   }
   out << "\n";
   const int panelWidth = metrics.compact ? width : std::min(width - 8, 96);
   const int panelLeft = std::max(0, (metrics.columns - panelWidth) / 2);
   std::vector<std::string> command = {
-      rawFg(th.amber, "/scope") + rawFg(th.gray, "  command surface") + th.reset,
+      rawFg(th.amber, "/scope") + rawFg(th.gray, "  " + text(th, "command_surface")) + th.reset,
       rawFg(th.white, "› ") + rawFg(th.gray, "format  ·  login root root  ·  scope tree  ·  map refcount") + th.reset,
-      rawFg(th.blue, "Build") + rawFg(th.white, "  observable inode/block/journal/COW kernel ") +
-          rawFg(th.dim, "terminal-first") + th.reset};
-  out << indentBlock(box(th, "command focus", command, panelWidth, "amber"), panelLeft) << "\n\n";
+      rawFg(th.blue, "Build") + rawFg(th.white, "  " + text(th, "observable_kernel") + " ") +
+          rawFg(th.dim, text(th, "terminal_first")) + th.reset};
+  out << indentBlock(box(th, text(th, "command_focus"), command, panelWidth, "amber"), panelLeft) << "\n\n";
   const int cardGap = 2;
   const int cardWidth = metrics.compact ? width : (width - 2 * cardGap) / 3;
-  auto volume = box(th, "Volume", {
-      "mount  " + color(th, status.mountState == "clean" ? th.green : th.amber, status.mountState),
+  auto volume = box(th, text(th, "volume"), {
+      text(th, "mount") + "  " + color(th, status.mountState == "clean" ? th.green : th.amber, status.mountState),
       "tx     " + color(th, th.white, "#" + std::to_string(status.txid)),
-      "blocks " + progress(th, status.blocks, status.blockTotal, std::max(10, cardWidth - 18), "blue")}, cardWidth, "border");
-  auto session = box(th, "Session", {
-      "user   " + color(th, th.white, status.user),
+      text(th, "blocks") + " " + progress(th, status.blocks, status.blockTotal, std::max(10, cardWidth - 18), "blue")}, cardWidth, "border");
+  auto session = box(th, text(th, "session"), {
+      text(th, "user") + "   " + color(th, th.white, status.user),
       "cwd    " + color(th, th.gray, truncate(status.cwd, cardWidth - 12)),
-      "open   " + color(th, th.white, std::to_string(status.openFiles))}, cardWidth, "blue");
-  auto obs = box(th, "Observability", {
-      "trace  " + color(th, status.trace ? th.green : th.red, status.trace ? "on" : "off"),
+      text(th, "open") + "   " + color(th, th.white, std::to_string(status.openFiles))}, cardWidth, "blue");
+  auto obs = box(th, text(th, "observability"), {
+      text(th, "trace") + "  " + color(th, status.trace ? th.green : th.red, status.trace ? "on" : "off"),
       "inode  " + progress(th, status.inodes, status.inodeTotal, std::max(10, cardWidth - 18), "amber"),
-      "snap   " + color(th, th.magenta, std::to_string(status.snapshots))}, cardWidth, "magenta");
+      text(th, "snap") + "   " + color(th, th.magenta, std::to_string(status.snapshots))}, cardWidth, "magenta");
   if (metrics.compact) {
     out << indentBlock(volume, left) << "\n" << indentBlock(session, left) << "\n" << indentBlock(obs, left) << "\n";
   } else {
     out << indentBlock(columns({volume, session, obs}, cardGap), left);
   }
-  out << indent << color(th, th.dim, "tips  tab commands   ctrl+p palette   trace show   snapshot diff   fsck") << "\n\n";
+  out << indent << color(th, th.dim, text(th, "tips") + "  " + text(th, "tab_commands") + "   " + text(th, "palette") + "   trace show   snapshot diff   fsck") << "\n\n";
   if (th.ansi) out << th.reset;
   return out.str();
 }
@@ -495,45 +590,45 @@ std::string renderResult(const Theme& th, const TerminalMetrics& metrics, const 
 std::string renderDir(const Theme& th, const TerminalMetrics& metrics, const std::string& path, const std::vector<DirRow>& rows) {
   const int width = std::min(metrics.columns, metrics.wide ? 132 : 112);
   std::vector<std::string> list;
-  list.push_back(color(th, th.dim, truncate(path, width - 8)) + "  " + badge(th, std::to_string(rows.size()) + " entries", "blue"));
+  list.push_back(color(th, th.dim, truncate(path, width - 8)) + "  " + badge(th, std::to_string(rows.size()) + " " + text(th, "entries"), "blue"));
   for (const auto& row : rows) {
     const auto tone = typeTone(row.type);
     const auto title = color(th, toneCode(th, tone), iconForType(row.type)) + " " + color(th, th.white, truncate(row.name, metrics.compact ? 22 : 32));
     const auto meta = color(th, th.dim, "inode ") + color(th, th.amber, std::to_string(row.inode)) +
-                      color(th, th.dim, " gen ") + std::to_string(row.generation) +
-                      color(th, th.dim, " ref ") + color(th, row.shared ? th.magenta : th.gray, std::to_string(row.refcount));
+                      color(th, th.dim, " " + text(th, "gen") + " ") + std::to_string(row.generation) +
+                      color(th, th.dim, " " + text(th, "ref") + " ") + color(th, row.shared ? th.magenta : th.gray, std::to_string(row.refcount));
     const auto mode = color(th, th.dim, row.mode + "  " + row.owner + ":" + row.klass);
     const auto blocks = progress(th, row.blockCount, 12, metrics.compact ? 8 : 12, row.shared ? "magenta" : "blue");
     list.push_back(title + "  " + badge(th, row.type, tone) + "  " + meta);
-    list.push_back("   " + mode + "  size " + color(th, th.white, std::to_string(row.size)) + "  blocks " + blocks);
+    list.push_back("   " + mode + "  " + text(th, "size") + " " + color(th, th.white, std::to_string(row.size)) + "  " + text(th, "blocks") + " " + blocks);
   }
-  return box(th, "Directory", list, width, "amber") + "\n";
+  return box(th, text(th, "directory"), list, width, "amber") + "\n";
 }
 
 std::string renderScope(const Theme& th, const TerminalMetrics& metrics, const KernelStatus& status, const std::vector<InodeRow>& inodeHot, const std::vector<std::pair<std::string, std::string>>& extra) {
   const int width = std::min(metrics.columns, metrics.wide ? 132 : 112);
   const int gap = 2;
   const int card = metrics.compact ? width : (width - gap) / 2;
-  auto a = box(th, "Kernel", {
-      "mount  " + color(th, status.mountState == "clean" ? th.green : th.amber, status.mountState),
+  auto a = box(th, text(th, "kernel"), {
+      text(th, "mount") + "  " + color(th, status.mountState == "clean" ? th.green : th.amber, status.mountState),
       "tx     " + color(th, th.white, "#" + std::to_string(status.txid)),
       "root   " + color(th, th.gray, status.mounted ? "visible" : "unmounted")}, card, "amber");
-  auto b = box(th, "Capacity", {
+  auto b = box(th, text(th, "capacity"), {
       "inode  " + progress(th, status.inodes, status.inodeTotal, std::max(12, card - 18), "amber") + " " + std::to_string(status.inodes),
-      "block  " + progress(th, status.blocks, status.blockTotal, std::max(12, card - 18), "blue") + " " + std::to_string(status.blocks),
-      "snap   " + color(th, th.magenta, std::to_string(status.snapshots))}, card, "blue");
+      text(th, "blocks") + "  " + progress(th, status.blocks, status.blockTotal, std::max(12, card - 18), "blue") + " " + std::to_string(status.blocks),
+      text(th, "snap") + "   " + color(th, th.magenta, std::to_string(status.snapshots))}, card, "blue");
   std::vector<std::string> hot;
   for (const auto& row : inodeHot) {
     hot.push_back(color(th, th.amber, "#" + std::to_string(row.inode)) + " " + padRight(row.type, 5) +
                   " ref=" + color(th, row.refcount > 1 ? th.magenta : th.gray, std::to_string(row.refcount)) +
                   " open=" + std::to_string(row.openCount) + " " + truncate(row.owner + ":" + row.klass, card - 34));
   }
-  if (hot.empty()) hot.push_back(color(th, th.dim, "no inode activity"));
-  auto c = box(th, "Hot inodes", hot, card, "magenta");
+  if (hot.empty()) hot.push_back(color(th, th.dim, text(th, "no_inode_activity")));
+  auto c = box(th, text(th, "hot_inodes"), hot, card, "magenta");
   std::vector<std::string> misc;
   for (const auto& item : extra) misc.push_back(color(th, th.gray, item.first) + "  " + color(th, th.white, item.second));
-  if (misc.empty()) misc.push_back("trace  " + color(th, status.trace ? th.green : th.red, status.trace ? "on" : "off"));
-  auto d = box(th, "Session", misc, card, "border");
+  if (misc.empty()) misc.push_back(text(th, "trace") + "  " + color(th, status.trace ? th.green : th.red, status.trace ? "on" : "off"));
+  auto d = box(th, text(th, "session"), misc, card, "border");
   if (metrics.compact) return a + "\n" + b + "\n" + c + "\n" + d + "\n";
   return columns({a, b}, gap) + columns({c, d}, gap);
 }
@@ -545,7 +640,7 @@ std::string renderTree(const Theme& th, const TerminalMetrics& metrics, const st
     std::string tone = line.find("ref=2") != std::string::npos || line.find("ref=3") != std::string::npos ? "magenta" : "gray";
     out.push_back(color(th, toneCode(th, tone), truncate(line, width - 4)));
   }
-  return box(th, "Tree / shared references", out, width, "blue") + "\n";
+  return box(th, text(th, "tree_shared"), out, width, "blue") + "\n";
 }
 
 std::string renderMap(const Theme& th, const TerminalMetrics& metrics, const std::string& what, const std::vector<MapCell>& cells, std::uint32_t totalBlocks) {
@@ -594,7 +689,7 @@ std::string renderMap(const Theme& th, const TerminalMetrics& metrics, const std
       if (!highlights.empty()) rendered.push_back(color(th, th.magenta, "shared hotspots"));
     }
     rendered.insert(rendered.end(), highlights.begin(), highlights.end());
-    return box(th, "Disk map / " + what, rendered, width, what == "journal" ? "green" : (what == "inode" ? "blue" : "amber")) + "\n";
+    return box(th, text(th, "disk_map") + " / " + what, rendered, width, what == "journal" ? "green" : (what == "inode" ? "blue" : "amber")) + "\n";
   }
 }
 
@@ -615,8 +710,12 @@ std::string renderTraceTimeline(const Theme& th, const TerminalMetrics& metrics,
          << badge(th, e.status, tone);
     lines.push_back(line.str());
   }
-  if (lines.empty()) lines.push_back(color(th, th.dim, "no trace events"));
-  return box(th, title, lines, width, "blue") + "\n";
+  if (lines.empty()) lines.push_back(color(th, th.dim, th.lang == "zh" ? "暂无 trace 事件" : "no trace events"));
+  std::string translatedTitle = title;
+  if (title == "Trace timeline") translatedTitle = text(th, "trace_timeline");
+  else if (title == "Trace replay / read-only") translatedTitle = text(th, "trace_replay");
+  else if (title == "Trace step") translatedTitle = text(th, "trace_step");
+  return box(th, translatedTitle, lines, width, "blue") + "\n";
 }
 
 std::string renderReadData(const Theme& th, const TerminalMetrics& metrics, const std::string& data, std::uint64_t oldOffset, std::uint64_t newOffset) {
@@ -631,7 +730,7 @@ std::string renderReadData(const Theme& th, const TerminalMetrics& metrics, cons
   std::string pointer(dataWidth, ' ');
   const auto pos = static_cast<int>(std::min<std::uint64_t>(newOffset, dataWidth ? dataWidth - 1 : 0));
   if (pos >= 0 && pos < dataWidth) pointer[pos] = '^';
-  return box(th, "Read offset", {
+  return box(th, text(th, "read_result"), {
       color(th, th.dim, ruler),
       color(th, th.white, padRight(shown, dataWidth)),
       color(th, th.blue, pointer) + " fd " + std::to_string(oldOffset) + " -> " + std::to_string(newOffset)}, width, "blue") + "\n";
@@ -647,8 +746,8 @@ std::string renderSnapshotDiff(const Theme& th, const TerminalMetrics& metrics, 
     else if (!raw.empty() && raw[0] == '~') tone = "amber";
     lines.push_back(color(th, toneCode(th, tone), truncate(raw, width - 4)) + (tone == "amber" ? color(th, th.magenta, "  COW") : ""));
   }
-  if (lines.empty()) lines.push_back(color(th, th.green, "no differences"));
-  return box(th, "Snapshot diff", lines, width, "magenta") + "\n";
+  if (lines.empty()) lines.push_back(color(th, th.green, th.lang == "zh" ? "无差异" : "no differences"));
+  return box(th, text(th, "snapshot_diff"), lines, width, "magenta") + "\n";
 }
 
 std::string renderClassGraph(const Theme& th, const TerminalMetrics& metrics, const std::vector<std::string>& linesIn) {
@@ -658,7 +757,7 @@ std::string renderClassGraph(const Theme& th, const TerminalMetrics& metrics, co
     std::string tone = line.find("inherits") != std::string::npos ? "magenta" : "amber";
     lines.push_back(color(th, toneCode(th, tone), "◇ ") + truncate(line, width - 6));
   }
-  return box(th, "Identity class graph", lines, width, "magenta") + "\n";
+  return box(th, text(th, "class_graph"), lines, width, "magenta") + "\n";
 }
 
 std::string renderAclGraph(const Theme& th, const TerminalMetrics& metrics, const std::string& title, const std::vector<std::string>& linesIn) {
@@ -668,8 +767,8 @@ std::string renderAclGraph(const Theme& th, const TerminalMetrics& metrics, cons
     std::string tone = line.find("rights=") != std::string::npos ? "blue" : "gray";
     lines.push_back(color(th, toneCode(th, tone), "● ") + truncate(line, width - 6));
   }
-  if (lines.empty()) lines.push_back(color(th, th.dim, "no ACL grants"));
-  return box(th, title, lines, width, "blue") + "\n";
+  if (lines.empty()) lines.push_back(color(th, th.dim, th.lang == "zh" ? "暂无 ACL grant" : "no ACL grants"));
+  return box(th, title == "ACL graph" ? text(th, "acl_graph") : title, lines, width, "blue") + "\n";
 }
 
 } // namespace scopefs::ui

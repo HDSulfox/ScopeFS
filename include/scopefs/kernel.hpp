@@ -54,6 +54,7 @@ class FileSystemKernel {
   void setInteractiveUi(bool enabled, bool ansi);
   ui::KernelStatus status() const;
   std::string uiThemeName() const;
+  std::string uiLanguageName() const;
   bool uiAnsiEnabled() const;
   TraceSink& trace();
   std::string prompt() const;
@@ -88,12 +89,15 @@ class FileSystemKernel {
   bool interactiveUi_ = false;
   bool ansiUi_ = false;
   std::string themeName_ = "scope-dark";
+  std::string langName_ = "zh";
   std::string crashMode_;
   std::string crashEvent_;
   std::uint64_t crashSeq_ = 0;
 
   CommandResult ok(const std::string& out = "");
   CommandResult err(ErrorCode code, const std::string& message, const std::string& out = "");
+  std::string usage(const std::string& spec) const;
+  std::string msg(const std::string& en, const std::string& zh) const;
   bool requiresLogin(const std::string& command) const;
   bool ensureLogged(CommandResult* result) const;
   bool isRoot() const;
@@ -164,6 +168,7 @@ class FileSystemKernel {
   CommandResult cmdFsck(const std::vector<std::string>& args);
   CommandResult cmdCrash(const std::vector<std::string>& args);
   CommandResult cmdTheme(const std::vector<std::string>& args);
+  CommandResult cmdLang(const std::vector<std::string>& args);
   CommandResult cmdHelp();
 
   std::string renderDir(std::uint32_t inode, const std::string& path) const;

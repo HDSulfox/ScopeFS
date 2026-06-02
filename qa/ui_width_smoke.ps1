@@ -37,7 +37,7 @@ foreach ($width in @(88, 120, 160)) {
     Write-Host $stderr
     throw "interactive width $width failed with exit code $($proc.ExitCode)"
   }
-  if ($stdout -notmatch "SCOPEFS" -or $stdout -notmatch "Directory" -or $stdout -notmatch "Trace timeline") {
+  if ($stdout -notmatch "ScopeFS" -or $stdout -notmatch "inode" -or $stdout -notmatch "Trace") {
     throw "interactive width $width did not render expected UI markers"
   }
 }

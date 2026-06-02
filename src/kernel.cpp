@@ -112,6 +112,14 @@ std::string plainMapLegend(const std::string& what) {
   return "legend: . free 1 ref=1 2 ref=2 # ref>2";
 }
 
+std::string plainMapLegendZh(const std::string& what) {
+  if (what == "blocks") return "图例: S super R refmeta I inode J journal P snapshot U users D data . 空闲";
+  if (what == "inode") return "图例: I inode-table 0-f owner-inode 数据块 * 共享 . 无关/空闲";
+  if (what == "journal") return "图例: J journal 保留区 0-f last-writer tx S super . 无 journal 信号";
+  if (what == "owner") return "图例: 0-f owner inode modulo 16 . 无 owner";
+  return "图例: . 空闲 1 ref=1 2 ref=2 # ref>2";
+}
+
 } // namespace
 
 std::string toString(NodeType type) {
@@ -185,6 +193,8 @@ ui::KernelStatus FileSystemKernel::status() const {
 
 std::string FileSystemKernel::uiThemeName() const { return themeName_; }
 
+std::string FileSystemKernel::uiLanguageName() const { return langName_; }
+
 bool FileSystemKernel::uiAnsiEnabled() const { return ansiUi_; }
 
 std::string FileSystemKernel::prompt() const {
@@ -234,16 +244,58 @@ CommandResult FileSystemKernel::err(ErrorCode code, const std::string& message, 
   return {code, message, out};
 }
 
+std::string FileSystemKernel::usage(const std::string& spec) const {
+  if (langName_ == "en") return "usage: " + spec;
+  std::string out = spec;
+  const std::vector<std::pair<std::string, std::string>> repl = {
+      {"<user_or_class>", "<用户或身份类>"},
+      {"<class_name>", "<身份类名>"},
+      {"[password]", "[密码]"},
+      {"[mode]", "[模式]"},
+      {"[size]", "[大小]"},
+      {"[constraints]", "[约束]"},
+      {"<password>", "<密码>"},
+      {"<path|fd>", "<路径|fd>"},
+      {"<constraints>", "<约束>"},
+      {"<rights>", "<权限>"},
+      {"<event>", "<事件>"},
+      {"<class>", "<身份类>"},
+      {"<file>", "<文件>"},
+      {"<user>", "<用户>"},
+      {"<path>", "<路径>"},
+      {"<mode>", "<模式>"},
+      {"<data>", "<数据>"},
+      {"<size>", "<大小>"},
+      {"<name>", "<名称>"},
+      {"<src>", "<源>"},
+      {"<dst>", "<目标>"},
+      {"<seq>", "<序号>"},
+      {"<a>", "<a>"},
+      {"<b>", "<b>"}};
+  for (const auto& [from, to] : repl) {
+    std::size_t pos = 0;
+    while ((pos = out.find(from, pos)) != std::string::npos) {
+      out.replace(pos, from.size(), to);
+      pos += to.size();
+    }
+  }
+  return "用法: " + out;
+}
+
+std::string FileSystemKernel::msg(const std::string& en, const std::string& zh) const {
+  return langName_ == "zh" ? zh : en;
+}
+
 bool FileSystemKernel::requiresLogin(const std::string& command) const {
   static const std::set<std::string> allowed = {
-      "help", "exit", "format", "login", "trace", "theme"};
+      "help", "exit", "format", "login", "trace", "theme", "lang"};
   if (allowed.count(command)) return false;
   return true;
 }
 
 bool FileSystemKernel::ensureLogged(CommandResult* result) const {
   if (!activeUser_.empty()) return true;
-  if (result) *result = {ErrorCode::NeedLogin, "login required before file-system operations", ""};
+  if (result) *result = {ErrorCode::NeedLogin, msg("login required before file-system operations", "执行文件系统操作前需要先 login"), ""};
   return false;
 }
 
@@ -292,8 +344,8 @@ CommandResult FileSystemKernel::execute(const std::vector<std::string>& args, co
   const auto cmd = lower(args[0]);
   trace_.setContext(currentUser(), rawCommand);
   if (mounted_) crashPoint("command.dispatch", "before");
-  if (!mounted_ && cmd != "format" && cmd != "help" && cmd != "exit" && cmd != "trace") {
-    return err(ErrorCode::InvalidCommand, "volume is not mounted; run format first");
+  if (!mounted_ && cmd != "format" && cmd != "help" && cmd != "exit" && cmd != "trace" && cmd != "lang") {
+    return err(ErrorCode::InvalidCommand, msg("volume is not mounted; run format first", "卷尚未挂载；请先运行 format"));
   }
   if (requiresLogin(cmd)) {
     CommandResult result;
@@ -328,6 +380,7 @@ CommandResult FileSystemKernel::execute(const std::vector<std::string>& args, co
     if (cmd == "fsck") return cmdFsck(args);
     if (cmd == "crash") return cmdCrash(args);
     if (cmd == "theme") return cmdTheme(args);
+    if (cmd == "lang") return cmdLang(args);
     if (cmd == "help") return cmdHelp();
   } catch (const CrashException&) {
     throw;
@@ -335,7 +388,7 @@ CommandResult FileSystemKernel::execute(const std::vector<std::string>& args, co
     trace_.emit(0, "command.error", cmd, "-", ex.what(), "uncaught exception", "error");
     return err(ErrorCode::IoError, ex.what());
   }
-  return err(ErrorCode::InvalidCommand, "unknown command: " + args[0]);
+  return err(ErrorCode::InvalidCommand, msg("unknown command: ", "未知命令: ") + args[0]);
 }
 
 void FileSystemKernel::initFreshState() {
@@ -1051,21 +1104,22 @@ CommandResult FileSystemKernel::cmdFormat() {
   auto tx = beginTx("format");
   commitTx(tx);
   std::ostringstream out;
-  out << "ScopeFS formatted at " << device_.volumePath() << "\n"
-      << "root/admin password: root/admin, usr1..usr8 password equals username\n"
-      << "layout: blocks=" << config::kTotalBlocks << " block_size=" << config::kBlockSize
+  out << msg("ScopeFS formatted at ", "ScopeFS 已格式化: ") << device_.volumePath() << "\n"
+      << msg("root/admin password: root/admin, usr1..usr8 password equals username",
+             "root/admin 密码: root/admin，usr1..usr8 密码等于用户名") << "\n"
+      << msg("layout: ", "布局: ") << "blocks=" << config::kTotalBlocks << " block_size=" << config::kBlockSize
       << " data_start=" << config::kDataStart << "\n";
   return ok(out.str());
 }
 
 CommandResult FileSystemKernel::cmdLogin(const std::vector<std::string>& args) {
-  if (args.size() < 2) return err(ErrorCode::InvalidArgument, "usage: login <user> [password]");
+  if (args.size() < 2) return err(ErrorCode::InvalidArgument, usage("login <user> [password]"));
   const auto user = args[1];
   const auto password = args.size() >= 3 ? args[2] : "";
   auto it = state_.users.find(user);
-  if (it == state_.users.end()) return err(ErrorCode::AuthFailed, "unknown user");
+  if (it == state_.users.end()) return err(ErrorCode::AuthFailed, msg("unknown user", "未知用户"));
   if (it->second.passwordHash != hashPassword(user, password)) {
-    return err(ErrorCode::AuthFailed, "invalid password");
+    return err(ErrorCode::AuthFailed, msg("invalid password", "密码错误"));
   }
   if (!sessions_.count(user)) {
     UserSession s;
@@ -1076,7 +1130,7 @@ CommandResult FileSystemKernel::cmdLogin(const std::vector<std::string>& args) {
   activeUser_ = user;
   trace_.setContext(activeUser_, "login");
   trace_.emit(0, "session.login", user, "-", sessions_[user].cwd, "user authenticated", "ok");
-  return ok("logged in as " + user + "\n");
+  return ok(msg("logged in as ", "已登录: ") + user + "\n");
 }
 
 CommandResult FileSystemKernel::cmdLogout() {
@@ -1092,7 +1146,7 @@ CommandResult FileSystemKernel::cmdLogout() {
   const auto old = activeUser_;
   activeUser_.clear();
   saveState();
-  return ok("logged out " + old + "\n");
+  return ok(msg("logged out ", "已登出: ") + old + "\n");
 }
 
 CommandResult FileSystemKernel::cmdWhoami() {
@@ -1104,7 +1158,7 @@ CommandResult FileSystemKernel::cmdWhoami() {
 }
 
 CommandResult FileSystemKernel::cmdMkdir(const std::vector<std::string>& args) {
-  if (args.size() < 2) return err(ErrorCode::InvalidArgument, "usage: mkdir <path>");
+  if (args.size() < 2) return err(ErrorCode::InvalidArgument, usage("mkdir <path>"));
   ResolvedPath rp;
   try { rp = resolve(args[1], false); } catch (const std::exception& ex) { return err(ErrorCode::NotFound, ex.what()); }
   if (rp.inode != 0) return err(ErrorCode::Exists, "path already exists");
@@ -1124,11 +1178,11 @@ CommandResult FileSystemKernel::cmdMkdir(const std::vector<std::string>& args) {
   refreshDirBlock(parent, tx.id);
   trace_.emit(tx.id, "dir.mkdir", rp.canonical, "-", std::to_string(id), "create directory inode and entry", "ok");
   commitTx(tx);
-  return ok("created directory " + rp.canonical + " inode=" + std::to_string(id) + "\n");
+  return ok(msg("created directory ", "已创建目录 ") + rp.canonical + " inode=" + std::to_string(id) + "\n");
 }
 
 CommandResult FileSystemKernel::cmdRmdir(const std::vector<std::string>& args) {
-  if (args.size() < 2) return err(ErrorCode::InvalidArgument, "usage: rmdir <path>");
+  if (args.size() < 2) return err(ErrorCode::InvalidArgument, usage("rmdir <path>"));
   ResolvedPath rp;
   try { rp = resolve(args[1], true); } catch (const std::exception& ex) { return err(ErrorCode::NotFound, ex.what()); }
   if (rp.canonical == "/") return err(ErrorCode::InvalidArgument, "cannot remove root");
@@ -1153,11 +1207,11 @@ CommandResult FileSystemKernel::cmdRmdir(const std::vector<std::string>& args) {
   releaseInode(rp.inode, true);
   trace_.emit(tx.id, "dir.rmdir", rp.canonical, std::to_string(rp.inode), "deleted", "remove empty directory", "ok");
   commitTx(tx);
-  return ok("removed directory " + rp.canonical + "\n");
+  return ok(msg("removed directory ", "已删除目录 ") + rp.canonical + "\n");
 }
 
 CommandResult FileSystemKernel::cmdChdir(const std::vector<std::string>& args) {
-  if (args.size() < 2) return err(ErrorCode::InvalidArgument, "usage: chdir <path>");
+  if (args.size() < 2) return err(ErrorCode::InvalidArgument, usage("chdir <path>"));
   ResolvedPath rp;
   try { rp = resolve(args[1], true); } catch (const std::exception& ex) { return err(ErrorCode::NotFound, ex.what()); }
   if (state_.inodes[rp.inode].type != NodeType::Directory) return err(ErrorCode::NotDirectory, "target is not a directory");
@@ -1181,7 +1235,7 @@ CommandResult FileSystemKernel::cmdDir(const std::vector<std::string>& args) {
 }
 
 CommandResult FileSystemKernel::cmdCreate(const std::vector<std::string>& args) {
-  if (args.size() < 2) return err(ErrorCode::InvalidArgument, "usage: create <path> [mode]");
+  if (args.size() < 2) return err(ErrorCode::InvalidArgument, usage("create <path> [mode]"));
   ResolvedPath rp;
   try { rp = resolve(args[1], false); } catch (const std::exception& ex) { return err(ErrorCode::NotFound, ex.what()); }
   if (rp.inode != 0) return err(ErrorCode::Exists, "path already exists");
@@ -1197,11 +1251,11 @@ CommandResult FileSystemKernel::cmdCreate(const std::vector<std::string>& args) 
   refreshDirBlock(parent, tx.id);
   trace_.emit(tx.id, "file.create", rp.canonical, "-", std::to_string(id), "create regular file", "ok");
   commitTx(tx);
-  return ok("created file " + rp.canonical + " inode=" + std::to_string(id) + "\n");
+  return ok(msg("created file ", "已创建文件 ") + rp.canonical + " inode=" + std::to_string(id) + "\n");
 }
 
 CommandResult FileSystemKernel::cmdOpen(const std::vector<std::string>& args) {
-  if (args.size() < 3) return err(ErrorCode::InvalidArgument, "usage: open <path> <r|w|rw|append|truncate>");
+  if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("open <path> <r|w|rw|append|truncate>"));
   ResolvedPath rp;
   try { rp = resolve(args[1], true); } catch (const std::exception& ex) { return err(ErrorCode::NotFound, ex.what()); }
   auto& inode = state_.inodes[rp.inode];
@@ -1231,7 +1285,7 @@ CommandResult FileSystemKernel::cmdOpen(const std::vector<std::string>& args) {
 }
 
 CommandResult FileSystemKernel::cmdRead(const std::vector<std::string>& args) {
-  if (args.size() < 2) return err(ErrorCode::InvalidArgument, "usage: read <fd> [size]");
+  if (args.size() < 2) return err(ErrorCode::InvalidArgument, usage("read <fd> [size]"));
   const int fd = std::stoi(args[1]);
   auto it = session().openFiles.find(fd);
   if (it == session().openFiles.end()) return err(ErrorCode::InvalidFd, "fd not open");
@@ -1246,13 +1300,13 @@ CommandResult FileSystemKernel::cmdRead(const std::vector<std::string>& args) {
   it->second.offset += chunk.size();
   trace_.emit(0, "file.read", std::to_string(fd), std::to_string(off), std::to_string(it->second.offset), "read advances fd offset", "ok");
   if (interactiveUi_) {
-    return ok(ui::renderReadData(ui::theme(ansiUi_, themeName_), ui::detectMetrics(), chunk, off, it->second.offset));
+    return ok(ui::renderReadData(ui::theme(ansiUi_, themeName_, langName_), ui::detectMetrics(), chunk, off, it->second.offset));
   }
   return ok(chunk + "\n");
 }
 
 CommandResult FileSystemKernel::cmdWrite(const std::vector<std::string>& args, const std::string& rawCommand) {
-  if (args.size() < 3) return err(ErrorCode::InvalidArgument, "usage: write <fd> <data>");
+  if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("write <fd> <data>"));
   const int fd = std::stoi(args[1]);
   auto it = session().openFiles.find(fd);
   if (it == session().openFiles.end()) return err(ErrorCode::InvalidFd, "fd not open");
@@ -1288,11 +1342,11 @@ CommandResult FileSystemKernel::cmdWrite(const std::vector<std::string>& args, c
   it->second.offset = off + data.size();
   trace_.emit(tx.id, "file.write", std::to_string(fd), std::to_string(off), std::to_string(it->second.offset), "write advances fd offset", "ok");
   commitTx(tx);
-  return ok("wrote " + std::to_string(data.size()) + " bytes\n");
+  return ok(msg("wrote ", "已写入 ") + std::to_string(data.size()) + msg(" bytes\n", " 字节\n"));
 }
 
 CommandResult FileSystemKernel::cmdClose(const std::vector<std::string>& args) {
-  if (args.size() < 2) return err(ErrorCode::InvalidArgument, "usage: close <fd>");
+  if (args.size() < 2) return err(ErrorCode::InvalidArgument, usage("close <fd>"));
   const int fd = std::stoi(args[1]);
   auto it = session().openFiles.find(fd);
   if (it == session().openFiles.end()) return err(ErrorCode::InvalidFd, "fd not open");
@@ -1305,11 +1359,11 @@ CommandResult FileSystemKernel::cmdClose(const std::vector<std::string>& args) {
     releaseInode(inodeId, true);
   }
   saveState();
-  return ok("closed fd " + std::to_string(fd) + "\n");
+  return ok(msg("closed fd ", "已关闭 fd ") + std::to_string(fd) + "\n");
 }
 
 CommandResult FileSystemKernel::cmdDelete(const std::vector<std::string>& args) {
-  if (args.size() < 2) return err(ErrorCode::InvalidArgument, "usage: delete <path>");
+  if (args.size() < 2) return err(ErrorCode::InvalidArgument, usage("delete <path>"));
   ResolvedPath rp;
   try { rp = resolve(args[1], true); } catch (const std::exception& ex) { return err(ErrorCode::NotFound, ex.what()); }
   if (state_.inodes[rp.inode].type == NodeType::Directory) return err(ErrorCode::IsDirectory, "use rmdir for directories");
@@ -1330,7 +1384,7 @@ CommandResult FileSystemKernel::cmdDelete(const std::vector<std::string>& args) 
 }
 
 CommandResult FileSystemKernel::cmdTruncate(const std::vector<std::string>& args) {
-  if (args.size() < 3) return err(ErrorCode::InvalidArgument, "usage: truncate <path|fd> <size>");
+  if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("truncate <path|fd> <size>"));
   const auto newSize = static_cast<std::size_t>(std::stoul(args[2]));
   std::uint32_t inodeId = 0;
   std::string path = args[1];
@@ -1363,23 +1417,23 @@ CommandResult FileSystemKernel::cmdTruncate(const std::vector<std::string>& args
 }
 
 CommandResult FileSystemKernel::cmdTrace(const std::vector<std::string>& args) {
-  if (args.size() < 2) return err(ErrorCode::InvalidArgument, "usage: trace on|off|show|save|replay|step|clear");
+  if (args.size() < 2) return err(ErrorCode::InvalidArgument, usage("trace on|off|show|save|replay|step|clear"));
   const auto sub = lower(args[1]);
   if (sub == "on") {
     trace_.setEnabled(true);
     trace_.emit(0, "trace.on", "trace", "off", "on", "manual", "ok");
-    return ok("trace enabled\n");
+    return ok(msg("trace enabled\n", "trace 已开启\n"));
   }
   if (sub == "off") {
     trace_.emit(0, "trace.off", "trace", "on", "off", "manual", "ok");
     trace_.setEnabled(false);
-    return ok("trace disabled\n");
+    return ok(msg("trace disabled\n", "trace 已关闭\n"));
   }
   if (sub == "show") {
     const std::size_t n = args.size() >= 3 ? static_cast<std::size_t>(std::stoul(args[2])) : 0;
     std::ostringstream out;
     const auto events = trace_.recent(n);
-    if (interactiveUi_) return ok(ui::renderTraceTimeline(ui::theme(ansiUi_, themeName_), ui::detectMetrics(), events));
+    if (interactiveUi_) return ok(ui::renderTraceTimeline(ui::theme(ansiUi_, themeName_, langName_), ui::detectMetrics(), events));
     renderTraceEvents(out, events);
     return ok(out.str());
   }
@@ -1393,7 +1447,7 @@ CommandResult FileSystemKernel::cmdTrace(const std::vector<std::string>& args) {
     const auto path = args.size() >= 3 ? args[2] : config::tracePath();
     auto events = TraceSink::load(path);
     if (interactiveUi_) {
-      return ok(ui::renderTraceTimeline(ui::theme(ansiUi_, themeName_), ui::detectMetrics(), events, "Trace replay / read-only"));
+      return ok(ui::renderTraceTimeline(ui::theme(ansiUi_, themeName_, langName_), ui::detectMetrics(), events, "Trace replay / read-only"));
     }
     std::ostringstream out;
     out << "ScopeFS trace replay (" << events.size() << " events, read-only)\n";
@@ -1403,7 +1457,7 @@ CommandResult FileSystemKernel::cmdTrace(const std::vector<std::string>& args) {
   if (sub == "step") {
     std::ostringstream out;
     const auto events = trace_.recent(1);
-    if (interactiveUi_) return ok(ui::renderTraceTimeline(ui::theme(ansiUi_, themeName_), ui::detectMetrics(), events, "Trace step"));
+    if (interactiveUi_) return ok(ui::renderTraceTimeline(ui::theme(ansiUi_, themeName_, langName_), ui::detectMetrics(), events, "Trace step"));
     renderTraceEvents(out, events);
     return ok(out.str());
   }
@@ -1411,7 +1465,7 @@ CommandResult FileSystemKernel::cmdTrace(const std::vector<std::string>& args) {
     trace_.clear();
     return ok("trace cleared\n");
   }
-  return err(ErrorCode::InvalidArgument, "unknown trace subcommand");
+  return err(ErrorCode::InvalidArgument, msg("unknown trace subcommand", "未知 trace 子命令"));
 }
 
 CommandResult FileSystemKernel::cmdScope(const std::vector<std::string>& args) {
@@ -1421,13 +1475,13 @@ CommandResult FileSystemKernel::cmdScope(const std::vector<std::string>& args) {
 CommandResult FileSystemKernel::cmdMap(const std::vector<std::string>& args) {
   auto what = args.size() >= 2 ? lower(args[1]) : "blocks";
   if (what != "blocks" && what != "inode" && what != "journal" && what != "refcount" && what != "owner") {
-    return err(ErrorCode::InvalidArgument, "usage: map [blocks|inode|journal|refcount|owner]");
+    return err(ErrorCode::InvalidArgument, usage("map [blocks|inode|journal|refcount|owner]"));
   }
   return ok(renderMap(what));
 }
 
 CommandResult FileSystemKernel::cmdSnapshot(const std::vector<std::string>& args) {
-  if (args.size() < 2) return err(ErrorCode::InvalidArgument, "usage: snapshot create|list|show|diff|rollback|delete");
+  if (args.size() < 2) return err(ErrorCode::InvalidArgument, usage("snapshot create|list|show|diff|rollback|delete"));
   const auto sub = lower(args[1]);
   if (sub == "list") {
     if (interactiveUi_) {
@@ -1440,7 +1494,7 @@ CommandResult FileSystemKernel::cmdSnapshot(const std::vector<std::string>& args
         if (!c.constraints.empty()) line += "  " + c.constraints;
         lines.push_back(line);
       }
-      return ok(ui::renderClassGraph(ui::theme(ansiUi_, themeName_), ui::detectMetrics(), lines));
+      return ok(ui::renderClassGraph(ui::theme(ansiUi_, themeName_, langName_), ui::detectMetrics(), lines));
     }
     std::ostringstream out;
     out << "name                 root   gen   txid  created\n";
@@ -1451,7 +1505,7 @@ CommandResult FileSystemKernel::cmdSnapshot(const std::vector<std::string>& args
     return ok(out.str());
   }
   if (sub == "create") {
-    if (args.size() < 3) return err(ErrorCode::InvalidArgument, "usage: snapshot create <name>");
+    if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("snapshot create <name>"));
     if (state_.snapshots.count(args[2])) return err(ErrorCode::Exists, "snapshot already exists");
     auto tx = beginTx("snapshot.create");
     Snapshot s;
@@ -1467,7 +1521,7 @@ CommandResult FileSystemKernel::cmdSnapshot(const std::vector<std::string>& args
     return ok("snapshot " + s.name + " root=" + std::to_string(s.rootInode) + "\n");
   }
   if (sub == "show") {
-    if (args.size() < 3) return err(ErrorCode::InvalidArgument, "usage: snapshot show <name>");
+    if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("snapshot show <name>"));
     auto it = state_.snapshots.find(args[2]);
     if (it == state_.snapshots.end()) return err(ErrorCode::NotFound, "snapshot not found");
     std::ostringstream out;
@@ -1477,7 +1531,7 @@ CommandResult FileSystemKernel::cmdSnapshot(const std::vector<std::string>& args
     return ok(out.str());
   }
   if (sub == "diff") {
-    if (args.size() < 4) return err(ErrorCode::InvalidArgument, "usage: snapshot diff <a> <b>");
+    if (args.size() < 4) return err(ErrorCode::InvalidArgument, usage("snapshot diff <a> <b>"));
     auto a = state_.snapshots.find(args[2]);
     auto b = state_.snapshots.find(args[3]);
     if (a == state_.snapshots.end() || b == state_.snapshots.end()) return err(ErrorCode::NotFound, "snapshot not found");
@@ -1506,12 +1560,12 @@ CommandResult FileSystemKernel::cmdSnapshot(const std::vector<std::string>& args
       }
       (void)inode;
     }
-    if (interactiveUi_) return ok(ui::renderSnapshotDiff(ui::theme(ansiUi_, themeName_), ui::detectMetrics(), diffLines));
+    if (interactiveUi_) return ok(ui::renderSnapshotDiff(ui::theme(ansiUi_, themeName_, langName_), ui::detectMetrics(), diffLines));
     const auto text = out.str();
     return ok(text.empty() ? "no differences\n" : text);
   }
   if (sub == "rollback") {
-    if (args.size() < 3) return err(ErrorCode::InvalidArgument, "usage: snapshot rollback <name>");
+    if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("snapshot rollback <name>"));
     auto it = state_.snapshots.find(args[2]);
     if (it == state_.snapshots.end()) return err(ErrorCode::NotFound, "snapshot not found");
     auto tx = beginTx("snapshot.rollback");
@@ -1524,7 +1578,7 @@ CommandResult FileSystemKernel::cmdSnapshot(const std::vector<std::string>& args
     return ok("rolled back to " + it->first + "\n");
   }
   if (sub == "delete") {
-    if (args.size() < 3) return err(ErrorCode::InvalidArgument, "usage: snapshot delete <name>");
+    if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("snapshot delete <name>"));
     auto it = state_.snapshots.find(args[2]);
     if (it == state_.snapshots.end()) return err(ErrorCode::NotFound, "snapshot not found");
     auto tx = beginTx("snapshot.delete");
@@ -1535,11 +1589,11 @@ CommandResult FileSystemKernel::cmdSnapshot(const std::vector<std::string>& args
     commitTx(tx);
     return ok("snapshot deleted\n");
   }
-  return err(ErrorCode::InvalidArgument, "unknown snapshot subcommand");
+  return err(ErrorCode::InvalidArgument, msg("unknown snapshot subcommand", "未知 snapshot 子命令"));
 }
 
 CommandResult FileSystemKernel::cmdClone(const std::vector<std::string>& args) {
-  if (args.size() < 3) return err(ErrorCode::InvalidArgument, "usage: clone <src> <dst>");
+  if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("clone <src> <dst>"));
   ResolvedPath src;
   ResolvedPath dst;
   try {
@@ -1571,7 +1625,7 @@ CommandResult FileSystemKernel::cmdClone(const std::vector<std::string>& args) {
 }
 
 CommandResult FileSystemKernel::cmdClass(const std::vector<std::string>& args) {
-  if (args.size() < 2) return err(ErrorCode::InvalidArgument, "usage: class create|grant|revoke|list|tree");
+  if (args.size() < 2) return err(ErrorCode::InvalidArgument, usage("class create|grant|revoke|list|tree"));
   const auto sub = lower(args[1]);
   if (sub == "list") {
     std::ostringstream out;
@@ -1595,11 +1649,11 @@ CommandResult FileSystemKernel::cmdClass(const std::vector<std::string>& args) {
       if (!c.parents.empty()) line += " inherits " + joinSet(c.parents, ',');
       lines.push_back(line);
     }
-    if (interactiveUi_) return ok(ui::renderClassGraph(ui::theme(ansiUi_, themeName_), ui::detectMetrics(), lines));
+    if (interactiveUi_) return ok(ui::renderClassGraph(ui::theme(ansiUi_, themeName_, langName_), ui::detectMetrics(), lines));
     return ok(out.str());
   }
   if (sub == "create") {
-    if (args.size() < 3) return err(ErrorCode::InvalidArgument, "usage: class create <class_name>");
+    if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("class create <class_name>"));
     if (state_.classes.count(args[2])) return err(ErrorCode::Exists, "class exists");
     auto tx = beginTx("class.create");
     ClassDef c;
@@ -1614,7 +1668,7 @@ CommandResult FileSystemKernel::cmdClass(const std::vector<std::string>& args) {
     return ok("class created " + c.name + "\n");
   }
   if (sub == "grant") {
-    if (args.size() < 5 || lower(args[3]) != "to") return err(ErrorCode::InvalidArgument, "usage: class grant <class> to <user_or_class> [with grant option] [constraints]");
+    if (args.size() < 5 || lower(args[3]) != "to") return err(ErrorCode::InvalidArgument, usage("class grant <class> to <user_or_class> [with grant option] [constraints]"));
     const auto cls = args[2];
     const auto target = args[4];
     if (!state_.classes.count(cls)) return err(ErrorCode::NotFound, "class not found");
@@ -1652,7 +1706,7 @@ CommandResult FileSystemKernel::cmdClass(const std::vector<std::string>& args) {
     return ok("granted " + cls + " to " + target + "\n");
   }
   if (sub == "revoke") {
-    if (args.size() < 5 || lower(args[3]) != "from") return err(ErrorCode::InvalidArgument, "usage: class revoke <class> from <user_or_class>");
+    if (args.size() < 5 || lower(args[3]) != "from") return err(ErrorCode::InvalidArgument, usage("class revoke <class> from <user_or_class>"));
     const auto cls = args[2];
     const auto target = args[4];
     if (!state_.classes.count(cls)) return err(ErrorCode::NotFound, "class not found");
@@ -1665,11 +1719,11 @@ CommandResult FileSystemKernel::cmdClass(const std::vector<std::string>& args) {
     commitTx(tx);
     return ok("revoked " + cls + " from " + target + "\n");
   }
-  return err(ErrorCode::InvalidArgument, "unknown class subcommand");
+  return err(ErrorCode::InvalidArgument, msg("unknown class subcommand", "未知 class 子命令"));
 }
 
 CommandResult FileSystemKernel::cmdAcl(const std::vector<std::string>& args) {
-  if (args.size() < 3) return err(ErrorCode::InvalidArgument, "usage: acl show|grant|revoke ...");
+  if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("acl show|grant|revoke ..."));
   const auto sub = lower(args[1]);
   if (sub == "show") {
     ResolvedPath rp;
@@ -1686,11 +1740,11 @@ CommandResult FileSystemKernel::cmdAcl(const std::vector<std::string>& args) {
       lines.push_back(acl.subject + " rights=" + acl.rights + " constraints=" + acl.constraints +
                       " gen=" + std::to_string(acl.generation));
     }
-    if (interactiveUi_) return ok(ui::renderAclGraph(ui::theme(ansiUi_, themeName_), ui::detectMetrics(), "ACL graph", lines));
+    if (interactiveUi_) return ok(ui::renderAclGraph(ui::theme(ansiUi_, themeName_, langName_), ui::detectMetrics(), "ACL graph", lines));
     return ok(out.str());
   }
   if (sub == "grant") {
-    if (args.size() < 5) return err(ErrorCode::InvalidArgument, "usage: acl grant <path> <user_or_class> <rights> [constraints]");
+    if (args.size() < 5) return err(ErrorCode::InvalidArgument, usage("acl grant <path> <user_or_class> <rights> [constraints]"));
     ResolvedPath rp;
     try { rp = resolve(args[2], true); } catch (const std::exception& ex) { return err(ErrorCode::NotFound, ex.what()); }
     std::string reason;
@@ -1711,7 +1765,7 @@ CommandResult FileSystemKernel::cmdAcl(const std::vector<std::string>& args) {
     return ok("acl granted\n");
   }
   if (sub == "revoke") {
-    if (args.size() < 5) return err(ErrorCode::InvalidArgument, "usage: acl revoke <path> <user_or_class> <rights>");
+    if (args.size() < 5) return err(ErrorCode::InvalidArgument, usage("acl revoke <path> <user_or_class> <rights>"));
     ResolvedPath rp;
     try { rp = resolve(args[2], true); } catch (const std::exception& ex) { return err(ErrorCode::NotFound, ex.what()); }
     std::string reason;
@@ -1726,11 +1780,11 @@ CommandResult FileSystemKernel::cmdAcl(const std::vector<std::string>& args) {
     commitTx(tx);
     return ok("acl revoked\n");
   }
-  return err(ErrorCode::InvalidArgument, "unknown acl subcommand");
+  return err(ErrorCode::InvalidArgument, msg("unknown acl subcommand", "未知 acl 子命令"));
 }
 
 CommandResult FileSystemKernel::cmdChmod(const std::vector<std::string>& args) {
-  if (args.size() < 3) return err(ErrorCode::InvalidArgument, "usage: chmod <path> <mode>");
+  if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("chmod <path> <mode>"));
   ResolvedPath rp;
   try { rp = resolve(args[1], true); } catch (const std::exception& ex) { return err(ErrorCode::NotFound, ex.what()); }
   std::string reason;
@@ -1746,7 +1800,7 @@ CommandResult FileSystemKernel::cmdChmod(const std::vector<std::string>& args) {
 }
 
 CommandResult FileSystemKernel::cmdChown(const std::vector<std::string>& args) {
-  if (args.size() < 3) return err(ErrorCode::InvalidArgument, "usage: chown <path> <user>");
+  if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("chown <path> <user>"));
   if (!isRoot()) return err(ErrorCode::PermissionDenied, "only root can chown");
   if (!state_.users.count(args[2])) return err(ErrorCode::NotFound, "user not found");
   ResolvedPath rp;
@@ -1763,7 +1817,7 @@ CommandResult FileSystemKernel::cmdChown(const std::vector<std::string>& args) {
 }
 
 CommandResult FileSystemKernel::cmdChclass(const std::vector<std::string>& args) {
-  if (args.size() < 3) return err(ErrorCode::InvalidArgument, "usage: chclass <path> <class>");
+  if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("chclass <path> <class>"));
   if (!state_.classes.count(args[2])) return err(ErrorCode::NotFound, "class not found");
   ResolvedPath rp;
   try { rp = resolve(args[1], true); } catch (const std::exception& ex) { return err(ErrorCode::NotFound, ex.what()); }
@@ -1785,7 +1839,7 @@ CommandResult FileSystemKernel::cmdFsck(const std::vector<std::string>& args) {
 }
 
 CommandResult FileSystemKernel::cmdCrash(const std::vector<std::string>& args) {
-  if (args.size() < 2) return err(ErrorCode::InvalidArgument, "usage: crash now|after|before|at|clear");
+  if (args.size() < 2) return err(ErrorCode::InvalidArgument, usage("crash now|after|before|at|clear"));
   const auto sub = lower(args[1]);
   if (sub == "clear") {
     crashMode_.clear();
@@ -1807,7 +1861,7 @@ CommandResult FileSystemKernel::cmdCrash(const std::vector<std::string>& args) {
     crashSeq_ = std::stoull(args[2]);
     return ok("crash armed at trace seq " + std::to_string(crashSeq_) + "\n");
   }
-  return err(ErrorCode::InvalidArgument, "usage: crash now|after <event>|before <event>|at <seq>|clear");
+  return err(ErrorCode::InvalidArgument, usage("crash now|after <event>|before <event>|at <seq>|clear"));
 }
 
 CommandResult FileSystemKernel::cmdTheme(const std::vector<std::string>& args) {
@@ -1816,23 +1870,46 @@ CommandResult FileSystemKernel::cmdTheme(const std::vector<std::string>& args) {
   }
   const auto name = lower(args[1]);
   if (name != "scope-dark" && name != "amber" && name != "blue" && name != "mono") {
-    return err(ErrorCode::InvalidArgument, "usage: theme scope-dark|amber|blue|mono");
+    return err(ErrorCode::InvalidArgument, usage("theme scope-dark|amber|blue|mono"));
   }
   themeName_ = name == "amber" ? "scope-dark" : name;
   if (name == "mono") ansiUi_ = false;
   return ok("theme set to " + name + "\n");
 }
 
+CommandResult FileSystemKernel::cmdLang(const std::vector<std::string>& args) {
+  if (args.size() < 2) {
+    return ok("lang " + langName_ + "\n");
+  }
+  const auto name = lower(args[1]);
+  if (name != "zh" && name != "en") {
+    return err(ErrorCode::InvalidArgument, langName_ == "zh" ? "用法: lang zh|en" : "usage: lang zh|en");
+  }
+  langName_ = name;
+  return ok(langName_ == "zh" ? "语言已切换为中文\n" : "language switched to English\n");
+}
+
 CommandResult FileSystemKernel::cmdHelp() {
   std::ostringstream out;
-  out << "ScopeFS commands\n"
-      << "  format | login <user> [password] | logout | whoami | exit\n"
-      << "  mkdir/rmdir/chdir/dir/create/open/read/write/close/delete/rm/truncate\n"
-      << "  trace on/off/show [n]/save <file>/replay <file>/step/clear\n"
-      << "  scope [inode|block|journal|open|tree] | map [blocks|inode|journal|refcount|owner]\n"
-      << "  snapshot create/list/show/diff/rollback/delete | clone <src> <dst>\n"
-      << "  class create/grant/revoke/list/tree | chmod/chown/chclass | acl show/grant/revoke\n"
-      << "  crash now/after/before/at/clear | fsck [--repair] | theme scope-dark|blue|mono\n";
+  if (langName_ == "zh") {
+    out << "ScopeFS 命令\n"
+        << "  format | login <用户> [密码] | logout | whoami | exit\n"
+        << "  mkdir/rmdir/chdir/dir/create/open/read/write/close/delete/rm/truncate\n"
+        << "  trace on/off/show [数量]/save <文件>/replay <文件>/step/clear\n"
+        << "  scope [inode|block|journal|open|tree] | map [blocks|inode|journal|refcount|owner]\n"
+        << "  snapshot create/list/show/diff/rollback/delete | clone <源> <目标>\n"
+        << "  class create/grant/revoke/list/tree | chmod/chown/chclass | acl show/grant/revoke\n"
+        << "  crash now/after/before/at/clear | fsck [--repair] | theme scope-dark|blue|mono | lang zh|en\n";
+  } else {
+    out << "ScopeFS commands\n"
+        << "  format | login <user> [password] | logout | whoami | exit\n"
+        << "  mkdir/rmdir/chdir/dir/create/open/read/write/close/delete/rm/truncate\n"
+        << "  trace on/off/show [n]/save <file>/replay <file>/step/clear\n"
+        << "  scope [inode|block|journal|open|tree] | map [blocks|inode|journal|refcount|owner]\n"
+        << "  snapshot create/list/show/diff/rollback/delete | clone <src> <dst>\n"
+        << "  class create/grant/revoke/list/tree | chmod/chown/chclass | acl show/grant/revoke\n"
+        << "  crash now/after/before/at/clear | fsck [--repair] | theme scope-dark|blue|mono | lang zh|en\n";
+  }
   return ok(out.str());
 }
 
@@ -1858,7 +1935,7 @@ std::string FileSystemKernel::renderDir(std::uint32_t inodeId, const std::string
       row.shared = n.refcount > 1;
       rows.push_back(row);
     }
-    return ui::renderDir(ui::theme(ansiUi_, themeName_), ui::detectMetrics(), path, rows);
+    return ui::renderDir(ui::theme(ansiUi_, themeName_, langName_), ui::detectMetrics(), path, rows);
   }
   std::ostringstream out;
   out << "╭────────────────────────────────────────────────────────────────────────────────────────╮\n";
@@ -1883,7 +1960,7 @@ std::string FileSystemKernel::renderDir(std::uint32_t inodeId, const std::string
 
 std::string FileSystemKernel::renderScope(const std::string& what) const {
   std::ostringstream out;
-  const auto th = ui::theme(ansiUi_, themeName_);
+  const auto th = ui::theme(ansiUi_, themeName_, langName_);
   const auto metrics = ui::detectMetrics();
   if (what == "tree") {
     std::set<std::uint32_t> seen;
@@ -2033,10 +2110,10 @@ std::string FileSystemKernel::renderMap(const std::string& what) const {
       cell.flags = block.flags;
       cells.push_back(cell);
     }
-    return ui::renderMap(ui::theme(ansiUi_, themeName_), ui::detectMetrics(), what, cells, config::kTotalBlocks);
+    return ui::renderMap(ui::theme(ansiUi_, themeName_, langName_), ui::detectMetrics(), what, cells, config::kTotalBlocks);
   }
   std::ostringstream out;
-  out << "ScopeFS disk map: " << what << "\n";
+  out << (langName_ == "zh" ? "ScopeFS 磁盘图: " : "ScopeFS disk map: ") << what << "\n";
   const std::uint32_t width = 96;
   const std::uint32_t rows = 24;
   const std::uint32_t total = width * rows;
@@ -2051,7 +2128,7 @@ std::string FileSystemKernel::renderMap(const std::string& what) const {
       }
       out << "\n";
     }
-    out << plainMapLegend(what) << "\n";
+    out << (langName_ == "zh" ? plainMapLegendZh(what) : plainMapLegend(what)) << "\n";
     return out.str();
   }
 }
