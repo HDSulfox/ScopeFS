@@ -26,6 +26,8 @@ struct Theme {
   std::string bg;
   std::string panel;
   std::string panel2;
+  std::string bold;
+  std::string normalWeight;
   std::string amber;
   std::string blue;
   std::string green;
@@ -35,6 +37,13 @@ struct Theme {
   std::string dim;
   std::string white;
   std::string border;
+};
+
+struct PromptRender {
+  std::string row;
+  int cursorColumn = 0;
+  std::size_t visibleStart = 0;
+  int commandWidth = 0;
 };
 
 struct KernelStatus {
@@ -98,12 +107,15 @@ std::string padRight(const std::string& text, int width);
 std::string padLeft(const std::string& text, int width);
 std::string center(const std::string& text, int width);
 std::string color(const Theme& th, const std::string& code, const std::string& text);
+std::string accent(const Theme& th, const std::string& code, const std::string& text);
+std::string panelAccent(const Theme& th, const std::string& code, const std::string& text);
 std::string badge(const Theme& th, const std::string& label, const std::string& tone);
 std::string progress(const Theme& th, std::size_t used, std::size_t total, int width, const std::string& tone);
 std::string box(const Theme& th, const std::string& title, const std::vector<std::string>& lines, int width, const std::string& tone = "border");
 std::string columns(const std::vector<std::string>& boxed, int gap = 2);
 
 std::string renderDashboard(const Theme& th, const TerminalMetrics& metrics, const KernelStatus& status);
+PromptRender renderPromptLine(const Theme& th, const TerminalMetrics& metrics, const KernelStatus& status, const std::string& line, std::size_t cursor);
 std::string renderPrompt(const Theme& th, const TerminalMetrics& metrics, const KernelStatus& status);
 std::string renderResult(const Theme& th, const TerminalMetrics& metrics, const std::string& command, bool ok, const std::string& code, const std::string& message, const std::string& output);
 std::string renderDir(const Theme& th, const TerminalMetrics& metrics, const std::string& path, const std::vector<DirRow>& rows);

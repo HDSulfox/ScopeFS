@@ -349,34 +349,16 @@ void Shell::redrawInteractiveLine(std::ostream& out, const std::string& line, st
   const auto metrics = ui::detectMetrics();
   const auto status = kernel_.status();
   const auto th = ui::theme(kernel_.uiAnsiEnabled(), kernel_.uiThemeName(), kernel_.uiLanguageName());
-  const int width = std::min(metrics.columns, metrics.compact ? metrics.columns : 112);
-  const int left = std::max(0, (metrics.columns - width) / 2);
-  const auto leftInfo = " " + ui::truncate(status.cwd, std::max(12, width / 3)) + " ";
-  const auto mid = status.user + "  tx#" + std::to_string(status.txid);
-  const auto midPadded = ui::padRight(mid, std::max(16, width / 4));
-  const std::string plainPrefix = "▌" + leftInfo + midPadded + " › ";
-  const int prefixWidth = ui::displayWidth(plainPrefix);
-  const int available = std::max(4, width - prefixWidth);
-  std::size_t visibleStart = 0;
-  if (cursor > static_cast<std::size_t>(available)) visibleStart = cursor - static_cast<std::size_t>(available);
-  if (visibleStart > line.size()) visibleStart = line.size();
-  const auto visible = line.substr(visibleStart, static_cast<std::size_t>(available));
-  const auto beforeCursor = line.substr(visibleStart, cursor - visibleStart);
-  const int commandWidth = ui::displayWidth(visible);
-  const int cursorColumn = left + prefixWidth + ui::displayWidth(beforeCursor);
+  const auto prompt = ui::renderPromptLine(th, metrics, status, line, cursor);
 
   if (!th.ansi || th.mono) {
-    (void)cursorColumn;
-    out << "\r" << std::string(left, ' ') << plainPrefix << visible
-        << std::string(std::max(2, available - commandWidth + 2), ' ');
+    out << "\r" << prompt.row << "  ";
     out.flush();
     return;
   }
 
-  const auto prefix = th.panel2 + th.blue + "▌" + th.amber + leftInfo + th.dim + midPadded + th.white + " › ";
-  out << "\x1b[?25l\r" << std::string(left, ' ') << prefix << visible
-      << std::string(std::max(0, available - commandWidth), ' ') << th.reset << "\r";
-  if (cursorColumn > 0) out << "\x1b[" << cursorColumn << "C";
+  out << "\x1b[?25l\r" << prompt.row << "\r";
+  if (prompt.cursorColumn > 0) out << "\x1b[" << prompt.cursorColumn << "C";
   out << "\x1b[?25h";
   out.flush();
 }
@@ -386,29 +368,11 @@ bool Shell::moveInteractiveCursor(std::ostream& out, const std::string& line, st
   const auto status = kernel_.status();
   const auto th = ui::theme(kernel_.uiAnsiEnabled(), kernel_.uiThemeName(), kernel_.uiLanguageName());
   if (!th.ansi || th.mono) return false;
-
-  const int width = std::min(metrics.columns, metrics.compact ? metrics.columns : 112);
-  const int left = std::max(0, (metrics.columns - width) / 2);
-  const auto leftInfo = " " + ui::truncate(status.cwd, std::max(12, width / 3)) + " ";
-  const auto mid = status.user + "  tx#" + std::to_string(status.txid);
-  const auto midPadded = ui::padRight(mid, std::max(16, width / 4));
-  const std::string plainPrefix = "▌" + leftInfo + midPadded + " › ";
-  const int prefixWidth = ui::displayWidth(plainPrefix);
-  const int available = std::max(4, width - prefixWidth);
-  const auto visibleStartFor = [&](std::size_t cursor) {
-    std::size_t visibleStart = 0;
-    if (cursor > static_cast<std::size_t>(available)) visibleStart = cursor - static_cast<std::size_t>(available);
-    return std::min(visibleStart, line.size());
-  };
-
-  const auto oldStart = visibleStartFor(oldCursor);
-  const auto newStart = visibleStartFor(newCursor);
-  if (oldStart != newStart) return false;
-
-  const auto beforeCursor = line.substr(newStart, newCursor - newStart);
-  const int cursorColumn = left + prefixWidth + ui::displayWidth(beforeCursor);
+  const auto oldPrompt = ui::renderPromptLine(th, metrics, status, line, oldCursor);
+  const auto newPrompt = ui::renderPromptLine(th, metrics, status, line, newCursor);
+  if (oldPrompt.visibleStart != newPrompt.visibleStart) return false;
   out << "\r";
-  if (cursorColumn > 0) out << "\x1b[" << cursorColumn << "C";
+  if (newPrompt.cursorColumn > 0) out << "\x1b[" << newPrompt.cursorColumn << "C";
   out.flush();
   return true;
 }

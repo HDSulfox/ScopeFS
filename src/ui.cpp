@@ -325,6 +325,8 @@ Theme theme(bool ansi, const std::string& name, const std::string& lang) {
   th.bg = esc("48;2;11;12;14");
   th.panel = esc("48;2;28;29;33");
   th.panel2 = esc("48;2;36;36;40");
+  th.bold = esc("1");
+  th.normalWeight = esc("22");
   th.amber = esc("38;2;255;181;118");
   th.blue = esc("38;2;112;170;255");
   th.green = esc("38;2;110;220;153");
@@ -439,10 +441,20 @@ std::string color(const Theme& th, const std::string& code, const std::string& t
   return code + text + th.reset;
 }
 
+std::string accent(const Theme& th, const std::string& code, const std::string& text) {
+  if (!th.ansi || th.mono) return text;
+  return code + th.bold + text + th.reset;
+}
+
+std::string panelAccent(const Theme& th, const std::string& code, const std::string& text) {
+  if (!th.ansi || th.mono) return text;
+  return code + th.bold + text + th.normalWeight;
+}
+
 std::string badge(const Theme& th, const std::string& label, const std::string& tone) {
   const auto text = " " + label + " ";
   if (!th.ansi || th.mono) return "[" + label + "]";
-  return toneCode(th, tone) + text + th.reset;
+  return toneCode(th, tone) + th.bold + text + th.reset;
 }
 
 std::string progress(const Theme& th, std::size_t used, std::size_t total, int width, const std::string& tone) {
@@ -543,28 +555,63 @@ std::string renderDashboard(const Theme& th, const TerminalMetrics& metrics, con
   if (metrics.compact) {
     out << indentBlock(volume, left) << "\n" << indentBlock(session, left) << "\n" << indentBlock(obs, left) << "\n";
   } else {
-    out << indentBlock(columns({volume, session, obs}, cardGap), left);
+    out << indentBlock(columns({volume, session, obs}, cardGap), left) << "\n";
   }
   out << indent << color(th, th.dim, text(th, "tips") + "  " + text(th, "tab_commands") + "   " + text(th, "palette") + "   trace show   snapshot diff   fsck") << "\n\n";
   if (th.ansi) out << th.reset;
   return out.str();
 }
 
-std::string renderPrompt(const Theme& th, const TerminalMetrics& metrics, const KernelStatus& status) {
+PromptRender renderPromptLine(const Theme& th, const TerminalMetrics& metrics, const KernelStatus& status, const std::string& line, std::size_t cursor) {
+  PromptRender rendered;
   const int width = std::min(metrics.columns, metrics.compact ? metrics.columns : 112);
   const int left = std::max(0, (metrics.columns - width) / 2);
-  const auto leftInfo = " " + truncate(status.cwd, std::max(12, width / 3)) + " ";
-  const auto mid = status.user + "  tx#" + std::to_string(status.txid);
-  std::ostringstream out;
+  int cwdSlot = metrics.compact ? 16 : (metrics.wide ? 32 : 24);
+  const int userSlot = metrics.compact ? 8 : 10;
+  const int txSlot = metrics.compact ? 7 : 8;
+  cwdSlot = std::max(10, std::min(cwdSlot, width - userSlot - txSlot - 10));
+
+  const auto cwd = truncate(status.cwd, cwdSlot);
+  const auto user = truncate(status.user, userSlot);
+  const auto tx = truncate("tx#" + std::to_string(status.txid), txSlot);
+  const auto cwdCell = padRight(cwd, cwdSlot);
+  const auto userCell = padRight(user, userSlot);
+  const auto txCell = padRight(tx, txSlot);
+  const std::string plainPrefix = "▌ " + cwdCell + " " + userCell + " " + txCell + " › ";
+  const int prefixWidth = displayWidth(plainPrefix);
+  const int available = std::max(4, width - prefixWidth);
+
+  std::size_t visibleStart = 0;
+  if (cursor > static_cast<std::size_t>(available)) visibleStart = cursor - static_cast<std::size_t>(available);
+  if (visibleStart > line.size()) visibleStart = line.size();
+  const auto visible = line.substr(visibleStart, static_cast<std::size_t>(available));
+  const auto beforeCursor = line.substr(visibleStart, cursor - visibleStart);
+  const int commandWidth = displayWidth(visible);
+
+  rendered.cursorColumn = left + prefixWidth + displayWidth(beforeCursor);
+  rendered.visibleStart = visibleStart;
+  rendered.commandWidth = commandWidth;
+
   if (!th.ansi || th.mono) {
-    out << std::string(left, ' ') << "▌" << leftInfo << padRight(mid, std::max(16, width / 4)) << " › ";
-    return out.str();
+    rendered.row = std::string(left, ' ') + plainPrefix + visible + std::string(std::max(0, available - commandWidth), ' ');
+    return rendered;
   }
-  const auto cursor = th.panel2 + th.blue + "▌" + th.amber + leftInfo +
-                      th.dim + padRight(mid, std::max(16, width / 4)) + th.white + " › ";
-  const int cursorWidth = displayWidth(cursor);
-  out << std::string(left, ' ') << cursor << std::string(std::max(0, width - cursorWidth), ' ')
-      << th.reset << "\r" << std::string(left, ' ') << cursor;
+
+  const auto prefix = th.panel2 + th.blue + "▌ " +
+                      panelAccent(th, th.amber, cwdCell) + " " +
+                      panelAccent(th, th.blue, userCell) + " " +
+                      th.dim + txCell + th.white + th.bold + " › " + th.normalWeight;
+  rendered.row = std::string(left, ' ') + prefix + th.white + visible +
+                 std::string(std::max(0, available - commandWidth), ' ') + th.reset;
+  return rendered;
+}
+
+std::string renderPrompt(const Theme& th, const TerminalMetrics& metrics, const KernelStatus& status) {
+  const auto prompt = renderPromptLine(th, metrics, status, "", 0);
+  if (!th.ansi || th.mono) return prompt.row;
+  std::ostringstream out;
+  out << prompt.row << "\r";
+  if (prompt.cursorColumn > 0) out << "\x1b[" << prompt.cursorColumn << "C";
   return out.str();
 }
 
@@ -593,18 +640,25 @@ std::string renderResult(const Theme& th, const TerminalMetrics& metrics, const 
 
 std::string renderDir(const Theme& th, const TerminalMetrics& metrics, const std::string& path, const std::vector<DirRow>& rows) {
   const int width = std::min(metrics.columns, metrics.wide ? 132 : 112);
+  const int nameWidth = metrics.compact ? 16 : (metrics.wide ? 32 : 24);
+  const int typeWidth = 6;
+  const std::string detailIndent(metrics.compact ? 3 : nameWidth + 3, ' ');
   std::vector<std::string> list;
-  list.push_back(color(th, th.dim, truncate(path, width - 8)) + "  " + badge(th, std::to_string(rows.size()) + " " + text(th, "entries"), "blue"));
+  list.push_back(accent(th, th.amber, truncate(path, width - 16)) + "  " + badge(th, std::to_string(rows.size()) + " " + text(th, "entries"), "blue"));
   for (const auto& row : rows) {
     const auto tone = typeTone(row.type);
-    const auto title = color(th, toneCode(th, tone), iconForType(row.type)) + " " + color(th, th.white, truncate(row.name, metrics.compact ? 22 : 32));
-    const auto meta = color(th, th.dim, "inode ") + color(th, th.amber, std::to_string(row.inode)) +
-                      color(th, th.dim, " " + text(th, "gen") + " ") + std::to_string(row.generation) +
-                      color(th, th.dim, " " + text(th, "ref") + " ") + color(th, row.shared ? th.magenta : th.gray, std::to_string(row.refcount));
-    const auto mode = color(th, th.dim, row.mode + "  " + row.owner + ":" + row.klass);
+    const auto nameTone = row.type == "dir" ? th.amber : (row.shared ? th.magenta : th.white);
+    const auto nameCell = accent(th, nameTone, padRight(row.name, nameWidth));
+    const auto typeCell = color(th, th.white, padRight(row.type, typeWidth));
+    const auto meta = color(th, th.dim, "inode ") + accent(th, th.amber, std::to_string(row.inode)) +
+                      color(th, th.dim, " " + text(th, "gen") + " ") + color(th, th.white, std::to_string(row.generation)) +
+                      color(th, th.dim, " " + text(th, "ref") + " ") + color(th, row.shared ? th.magenta : th.white, std::to_string(row.refcount));
+    const auto ownerClass = row.owner + ":" + row.klass;
     const auto blocks = progress(th, row.blockCount, 12, metrics.compact ? 8 : 12, row.shared ? "magenta" : "blue");
-    list.push_back(title + "  " + badge(th, row.type, tone) + "  " + meta);
-    list.push_back("   " + mode + "  " + text(th, "size") + " " + color(th, th.white, std::to_string(row.size)) + "  " + text(th, "blocks") + " " + blocks);
+    list.push_back(color(th, toneCode(th, tone), iconForType(row.type)) + " " + nameCell + " " + typeCell + " " + meta);
+    list.push_back(detailIndent + color(th, th.white, row.mode) + "  " + color(th, th.white, ownerClass) +
+                   "  " + color(th, th.dim, text(th, "size") + " ") + accent(th, th.white, std::to_string(row.size)) +
+                   "  " + color(th, th.dim, text(th, "blocks") + " ") + blocks);
   }
   return box(th, text(th, "directory"), list, width, "amber") + "\n";
 }
