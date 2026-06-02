@@ -1,7 +1,12 @@
 #include "scopefs/shell.hpp"
 
+#include "scopefs/util.hpp"
+
+#include <algorithm>
 #include <cctype>
 #include <iostream>
+#include <map>
+#include <set>
 #include <sstream>
 
 #if defined(_WIN32)
@@ -12,6 +17,140 @@
 #endif
 
 namespace scopefs {
+
+namespace {
+
+enum class EditorKey {
+  Character,
+  Enter,
+  Backspace,
+  Tab,
+  Left,
+  Right,
+  Up,
+  Down,
+  Delete,
+  CtrlC,
+  CtrlD,
+  Unknown
+};
+
+struct KeyPress {
+  EditorKey key = EditorKey::Unknown;
+  char ch = 0;
+};
+
+#if !defined(_WIN32)
+class RawTerminalMode {
+ public:
+  RawTerminalMode() {
+    if (!isatty(STDIN_FILENO)) return;
+    if (tcgetattr(STDIN_FILENO, &old_) != 0) return;
+    termios raw = old_;
+    raw.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO));
+    raw.c_iflag &= static_cast<tcflag_t>(~(IXON | ICRNL));
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) == 0) active_ = true;
+  }
+
+  ~RawTerminalMode() {
+    if (active_) tcsetattr(STDIN_FILENO, TCSANOW, &old_);
+  }
+
+ private:
+  termios old_{};
+  bool active_ = false;
+};
+#endif
+
+KeyPress readEditorKey() {
+#if defined(_WIN32)
+  const int ch = _getch();
+  if (ch == 0 || ch == 224) {
+    const int ext = _getch();
+    if (ext == 72) return {EditorKey::Up, 0};
+    if (ext == 80) return {EditorKey::Down, 0};
+    if (ext == 75) return {EditorKey::Left, 0};
+    if (ext == 77) return {EditorKey::Right, 0};
+    if (ext == 83) return {EditorKey::Delete, 0};
+    return {EditorKey::Unknown, 0};
+  }
+  if (ch == 27) {
+    const int a = _getch();
+    if (a == '[') {
+      const int b = _getch();
+      if (b == 'A') return {EditorKey::Up, 0};
+      if (b == 'B') return {EditorKey::Down, 0};
+      if (b == 'C') return {EditorKey::Right, 0};
+      if (b == 'D') return {EditorKey::Left, 0};
+      if (b == '3') {
+        (void)_getch();
+        return {EditorKey::Delete, 0};
+      }
+    }
+    return {EditorKey::Unknown, 0};
+  }
+  if (ch == '\r' || ch == '\n') return {EditorKey::Enter, 0};
+  if (ch == '\b' || ch == 127) return {EditorKey::Backspace, 0};
+  if (ch == '\t') return {EditorKey::Tab, 0};
+  if (ch == 3) return {EditorKey::CtrlC, 0};
+  if (ch == 4) return {EditorKey::CtrlD, 0};
+  if (ch >= 32) return {EditorKey::Character, static_cast<char>(ch)};
+  return {EditorKey::Unknown, 0};
+#else
+  char ch = 0;
+  if (read(STDIN_FILENO, &ch, 1) != 1) return {EditorKey::CtrlD, 0};
+  if (ch == '\r' || ch == '\n') return {EditorKey::Enter, 0};
+  if (ch == 127 || ch == '\b') return {EditorKey::Backspace, 0};
+  if (ch == '\t') return {EditorKey::Tab, 0};
+  if (ch == 3) return {EditorKey::CtrlC, 0};
+  if (ch == 4) return {EditorKey::CtrlD, 0};
+  if (ch == 27) {
+    char seq[3] = {};
+    if (read(STDIN_FILENO, &seq[0], 1) != 1) return {EditorKey::Unknown, 0};
+    if (read(STDIN_FILENO, &seq[1], 1) != 1) return {EditorKey::Unknown, 0};
+    if (seq[0] == '[') {
+      if (seq[1] == 'A') return {EditorKey::Up, 0};
+      if (seq[1] == 'B') return {EditorKey::Down, 0};
+      if (seq[1] == 'C') return {EditorKey::Right, 0};
+      if (seq[1] == 'D') return {EditorKey::Left, 0};
+      if (seq[1] == '3') {
+        (void)read(STDIN_FILENO, &seq[2], 1);
+        return {EditorKey::Delete, 0};
+      }
+    }
+    return {EditorKey::Unknown, 0};
+  }
+  if (static_cast<unsigned char>(ch) >= 32) return {EditorKey::Character, ch};
+  return {EditorKey::Unknown, 0};
+#endif
+}
+
+std::string commonPrefix(std::vector<std::string> values) {
+  if (values.empty()) return "";
+  std::sort(values.begin(), values.end());
+  std::string prefix = values.front();
+  for (const auto& value : values) {
+    while (!prefix.empty() && value.rfind(prefix, 0) != 0) prefix.pop_back();
+  }
+  return prefix;
+}
+
+bool isPathCommand(const std::string& cmd, std::size_t tokenIndex, const std::vector<std::string>& prior) {
+  static const std::set<std::string> firstPath = {
+      "cd", "chdir", "dir", "ls", "mkdir", "rmdir", "create", "open", "delete", "rm", "truncate", "chmod", "chown", "chclass"};
+  if (firstPath.count(cmd) && tokenIndex == 1) return true;
+  if (cmd == "clone" && (tokenIndex == 1 || tokenIndex == 2)) return true;
+  if (cmd == "acl" && prior.size() >= 2 && tokenIndex == 2) return true;
+  return false;
+}
+
+bool wantsDirectoryOnly(const std::string& cmd) {
+  return cmd == "cd" || cmd == "chdir" || cmd == "dir" || cmd == "ls" || cmd == "mkdir" || cmd == "rmdir";
+}
+
+} // namespace
 
 std::vector<std::string> tokenize(const std::string& line) {
   std::vector<std::string> out;
@@ -62,13 +201,18 @@ int Shell::run(std::istream& in, std::ostream& out, bool interactive, const Term
   if (interactive) banner(out, caps);
   std::string line;
   while (true) {
-    if (interactive) {
+    const bool useEditor = interactive && caps.inputTty;
+    if (useEditor) {
+      line = readInteractiveLine(out, caps);
+    } else if (interactive) {
       out << ui::renderPrompt(ui::theme(kernel_.uiAnsiEnabled(), kernel_.uiThemeName()), ui::detectMetrics(), kernel_.status());
       out.flush();
-    }
-    if (!std::getline(in, line)) break;
-    if (interactive && kernel_.uiAnsiEnabled()) {
-      out << ui::theme(true, kernel_.uiThemeName()).reset;
+      if (!std::getline(in, line)) break;
+      if (interactive && kernel_.uiAnsiEnabled()) {
+        out << ui::theme(true, kernel_.uiThemeName()).reset;
+      }
+    } else {
+      if (!std::getline(in, line)) break;
     }
     if (!line.empty() && line.back() == '\r') line.pop_back();
     if (line.size() >= 3 &&
@@ -96,6 +240,192 @@ int Shell::run(std::istream& in, std::ostream& out, bool interactive, const Term
     }
   }
   return 0;
+}
+
+std::string Shell::readInteractiveLine(std::ostream& out, const TerminalCaps& caps) {
+  (void)caps;
+#if !defined(_WIN32)
+  RawTerminalMode raw;
+#endif
+  std::string line;
+  std::string draft;
+  std::size_t cursor = 0;
+  std::size_t historyIndex = history_.size();
+  redrawInteractiveLine(out, line, cursor);
+  while (true) {
+    const auto key = readEditorKey();
+    bool redraw = true;
+    switch (key.key) {
+      case EditorKey::Enter:
+        redrawInteractiveLine(out, line, line.size());
+        if (kernel_.uiAnsiEnabled()) out << ui::theme(true, kernel_.uiThemeName()).reset;
+        out << "\n";
+        if (!line.empty() && (history_.empty() || history_.back() != line)) {
+          history_.push_back(line);
+          if (history_.size() > 200) history_.erase(history_.begin());
+        }
+        return line;
+      case EditorKey::CtrlC:
+        line.clear();
+        cursor = 0;
+        redrawInteractiveLine(out, line, cursor);
+        if (kernel_.uiAnsiEnabled()) out << ui::theme(true, kernel_.uiThemeName()).reset;
+        out << "^C\n";
+        return "";
+      case EditorKey::CtrlD:
+        if (line.empty()) {
+          if (kernel_.uiAnsiEnabled()) out << ui::theme(true, kernel_.uiThemeName()).reset;
+          out << "\n";
+          return "exit";
+        }
+        redraw = false;
+        break;
+      case EditorKey::Backspace:
+        if (cursor > 0) {
+          line.erase(cursor - 1, 1);
+          --cursor;
+        }
+        break;
+      case EditorKey::Delete:
+        if (cursor < line.size()) line.erase(cursor, 1);
+        break;
+      case EditorKey::Left:
+        if (cursor > 0) --cursor;
+        break;
+      case EditorKey::Right:
+        if (cursor < line.size()) ++cursor;
+        break;
+      case EditorKey::Up:
+        if (!history_.empty() && historyIndex > 0) {
+          if (historyIndex == history_.size()) draft = line;
+          --historyIndex;
+          line = history_[historyIndex];
+          cursor = line.size();
+        }
+        break;
+      case EditorKey::Down:
+        if (!history_.empty() && historyIndex < history_.size()) {
+          ++historyIndex;
+          line = historyIndex == history_.size() ? draft : history_[historyIndex];
+          cursor = line.size();
+        }
+        break;
+      case EditorKey::Tab: {
+        std::size_t tokenStart = cursor;
+        auto candidates = completionCandidates(line, cursor, &tokenStart);
+        if (candidates.empty()) {
+          out << '\a';
+          redraw = false;
+          break;
+        }
+        const auto current = line.substr(tokenStart, cursor - tokenStart);
+        auto replacement = candidates.size() == 1 ? candidates.front() : commonPrefix(candidates);
+        if (replacement.size() > current.size()) {
+          line.replace(tokenStart, cursor - tokenStart, replacement);
+          cursor = tokenStart + replacement.size();
+        } else {
+          out << '\a';
+          redraw = false;
+        }
+        break;
+      }
+      case EditorKey::Character:
+        line.insert(cursor, 1, key.ch);
+        ++cursor;
+        break;
+      case EditorKey::Unknown:
+        redraw = false;
+        break;
+    }
+    if (redraw) redrawInteractiveLine(out, line, cursor);
+  }
+}
+
+void Shell::redrawInteractiveLine(std::ostream& out, const std::string& line, std::size_t cursor) const {
+  const auto metrics = ui::detectMetrics();
+  const auto status = kernel_.status();
+  const auto th = ui::theme(kernel_.uiAnsiEnabled(), kernel_.uiThemeName());
+  const int width = std::min(metrics.columns, metrics.compact ? metrics.columns : 112);
+  const int left = std::max(0, (metrics.columns - width) / 2);
+  const auto leftInfo = " " + ui::truncate(status.cwd, std::max(12, width / 3)) + " ";
+  const auto mid = status.user + "  tx#" + std::to_string(status.txid);
+  const auto midPadded = ui::padRight(mid, std::max(16, width / 4));
+  const std::string plainPrefix = "▌" + leftInfo + midPadded + " › ";
+  const int prefixWidth = ui::displayWidth(plainPrefix);
+  const int available = std::max(4, width - prefixWidth);
+  std::size_t visibleStart = 0;
+  if (cursor > static_cast<std::size_t>(available)) visibleStart = cursor - static_cast<std::size_t>(available);
+  if (visibleStart > line.size()) visibleStart = line.size();
+  const auto visible = line.substr(visibleStart, static_cast<std::size_t>(available));
+  const auto beforeCursor = line.substr(visibleStart, cursor - visibleStart);
+  const int commandWidth = ui::displayWidth(visible);
+  const int cursorColumn = left + prefixWidth + ui::displayWidth(beforeCursor);
+
+  if (!th.ansi || th.mono) {
+    (void)cursorColumn;
+    out << "\r" << std::string(left, ' ') << plainPrefix << visible
+        << std::string(std::max(2, available - commandWidth + 2), ' ');
+    out.flush();
+    return;
+  }
+
+  const auto prefix = th.panel2 + th.blue + "▌" + th.amber + leftInfo + th.dim + midPadded + th.white + " › ";
+  out << "\r\x1b[2K" << std::string(left, ' ') << prefix << visible
+      << std::string(std::max(0, available - commandWidth), ' ') << th.reset << "\r";
+  if (cursorColumn > 0) out << "\x1b[" << cursorColumn << "C";
+  out.flush();
+}
+
+std::vector<std::string> Shell::completionCandidates(const std::string& line, std::size_t cursor, std::size_t* tokenStart) const {
+  const auto before = line.substr(0, cursor);
+  const auto splitAt = before.find_last_of(" \t");
+  const std::size_t start = splitAt == std::string::npos ? 0 : splitAt + 1;
+  if (tokenStart) *tokenStart = start;
+  const auto token = before.substr(start);
+  const auto prior = tokenize(before.substr(0, start));
+
+  static const std::vector<std::string> commands = {
+      "login", "logout", "whoami", "format", "mkdir", "rmdir", "chdir", "cd", "dir", "ls",
+      "create", "open", "read", "write", "close", "delete", "rm", "truncate", "trace", "scope",
+      "map", "snapshot", "clone", "class", "chmod", "chown", "chclass", "acl", "fsck", "crash",
+      "theme", "help", "exit"};
+  static const std::map<std::string, std::vector<std::string>> subcommands = {
+      {"map", {"blocks", "inode", "journal", "refcount", "owner"}},
+      {"scope", {"inode", "block", "journal", "open", "tree"}},
+      {"trace", {"on", "off", "show", "save", "replay", "step", "clear"}},
+      {"snapshot", {"create", "list", "show", "diff", "rollback", "delete"}},
+      {"class", {"create", "grant", "revoke", "list", "tree"}},
+      {"acl", {"show", "grant", "revoke"}},
+      {"crash", {"now", "after", "before", "at", "clear"}},
+      {"theme", {"scope-dark", "blue", "mono"}},
+      {"open", {"r", "w", "rw", "append", "truncate"}},
+      {"fsck", {"--repair"}}};
+
+  std::vector<std::string> matches;
+  auto addMatches = [&](const std::vector<std::string>& values) {
+    for (const auto& value : values) {
+      if (value.rfind(token, 0) == 0) matches.push_back(value);
+    }
+  };
+
+  if (prior.empty()) {
+    addMatches(commands);
+    return matches;
+  }
+
+  const auto cmd = lower(prior.front());
+  const std::size_t tokenIndex = prior.size();
+  const auto subIt = subcommands.find(cmd);
+  if (subIt != subcommands.end() && tokenIndex == 1) {
+    addMatches(subIt->second);
+    return matches;
+  }
+
+  if (isPathCommand(cmd, tokenIndex, prior)) {
+    return kernel_.completePath(token, wantsDirectoryOnly(cmd));
+  }
+
+  return matches;
 }
 
 void Shell::banner(std::ostream& out, const TerminalCaps& caps) const {

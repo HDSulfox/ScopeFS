@@ -475,12 +475,19 @@ std::string renderResult(const Theme& th, const TerminalMetrics& metrics, const 
   const int width = std::min(metrics.columns, metrics.wide ? 132 : 112);
   const int left = std::max(0, (metrics.columns - width) / 2);
   const std::string indent(left, ' ');
+  if (th.ansi && !th.mono) out << th.reset << "\x1b[2K";
   out << indent << badge(th, ok ? "OK" : code, tone) << " "
       << color(th, th.dim, truncate(command, std::max(20, width - 28)));
   if (!ok) out << " " << color(th, th.red, message);
+  if (th.ansi && !th.mono) out << th.reset << "\x1b[0K";
   out << "\n";
   if (!output.empty()) {
-    for (const auto& line : splitLines(output)) out << indent << line << "\n";
+    for (const auto& line : splitLines(output)) {
+      if (th.ansi && !th.mono) out << th.reset << "\x1b[2K";
+      out << indent << line;
+      if (th.ansi && !th.mono) out << th.reset << "\x1b[0K";
+      out << "\n";
+    }
   }
   return out.str();
 }

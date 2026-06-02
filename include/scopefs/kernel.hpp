@@ -59,6 +59,7 @@ class FileSystemKernel {
   std::string prompt() const;
   std::string currentUser() const;
   bool isMounted() const;
+  std::vector<std::string> completePath(const std::string& token, bool directoriesOnly) const;
 
  private:
   struct ResolvedPath {

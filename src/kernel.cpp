@@ -194,6 +194,38 @@ std::string FileSystemKernel::prompt() const {
   return "scopefs[" + user + " " + cwd + "]> ";
 }
 
+std::vector<std::string> FileSystemKernel::completePath(const std::string& token, bool directoriesOnly) const {
+  std::vector<std::string> matches;
+  if (!mounted_ || state_.inodes.empty()) return matches;
+
+  const auto slash = token.find_last_of('/');
+  const std::string dirToken = slash == std::string::npos ? "." : (slash == 0 ? "/" : token.substr(0, slash));
+  const std::string namePrefix = slash == std::string::npos ? token : token.substr(slash + 1);
+  const std::string replacementPrefix = slash == std::string::npos ? "" : token.substr(0, slash + 1);
+  const auto base = activeUser_.empty() || sessions_.find(activeUser_) == sessions_.end() ? "/" : sessions_.at(activeUser_).cwd;
+  const auto dirPath = canonicalize(base, dirToken);
+
+  std::uint32_t current = state_.super.activeRoot;
+  for (const auto& part : pathParts(dirPath)) {
+    const auto inodeIt = state_.inodes.find(current);
+    if (inodeIt == state_.inodes.end() || inodeIt->second.type != NodeType::Directory) return matches;
+    const auto entryIt = inodeIt->second.entries.find(part);
+    if (entryIt == inodeIt->second.entries.end()) return matches;
+    current = entryIt->second.inode;
+  }
+
+  const auto dirIt = state_.inodes.find(current);
+  if (dirIt == state_.inodes.end() || dirIt->second.type != NodeType::Directory) return matches;
+  for (const auto& [name, entry] : dirIt->second.entries) {
+    if (!startsWith(name, namePrefix)) continue;
+    const auto childIt = state_.inodes.find(entry.inode);
+    if (directoriesOnly && (childIt == state_.inodes.end() || childIt->second.type != NodeType::Directory)) continue;
+    matches.push_back(replacementPrefix + name);
+  }
+  std::sort(matches.begin(), matches.end());
+  return matches;
+}
+
 CommandResult FileSystemKernel::ok(const std::string& out) {
   return {ErrorCode::Ok, "ok", out};
 }
@@ -1388,7 +1420,6 @@ CommandResult FileSystemKernel::cmdScope(const std::vector<std::string>& args) {
 
 CommandResult FileSystemKernel::cmdMap(const std::vector<std::string>& args) {
   auto what = args.size() >= 2 ? lower(args[1]) : "blocks";
-  if (what == "recount") what = "refcount";
   if (what != "blocks" && what != "inode" && what != "journal" && what != "refcount" && what != "owner") {
     return err(ErrorCode::InvalidArgument, "usage: map [blocks|inode|journal|refcount|owner]");
   }

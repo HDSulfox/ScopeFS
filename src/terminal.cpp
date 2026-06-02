@@ -7,6 +7,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace scopefs {
@@ -33,13 +35,14 @@ TerminalCaps initTerminal(bool interactive) {
     if (in != INVALID_HANDLE_VALUE) {
       DWORD mode = 0;
       if (GetConsoleMode(in, &mode)) {
+        caps.inputTty = true;
         mode |= ENABLE_VIRTUAL_TERMINAL_INPUT;
         SetConsoleMode(in, mode);
       }
     }
   }
 #else
-  (void)interactive;
+  caps.inputTty = interactive && isatty(STDIN_FILENO);
 #endif
   return caps;
 }
