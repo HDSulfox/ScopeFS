@@ -67,6 +67,9 @@ int Shell::run(std::istream& in, std::ostream& out, bool interactive, const Term
       out.flush();
     }
     if (!std::getline(in, line)) break;
+    if (interactive && kernel_.uiAnsiEnabled()) {
+      out << ui::theme(true, kernel_.uiThemeName()).reset;
+    }
     if (!line.empty() && line.back() == '\r') line.pop_back();
     if (line.size() >= 3 &&
         static_cast<unsigned char>(line[0]) == 0xEF &&

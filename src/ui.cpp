@@ -91,6 +91,24 @@ std::string repeatText(const std::string& text, int count) {
   return out;
 }
 
+std::string indentBlock(const std::string& text, int spaces) {
+  const std::string indent(std::max(0, spaces), ' ');
+  std::ostringstream out;
+  std::istringstream in(text);
+  std::string line;
+  bool first = true;
+  while (std::getline(in, line)) {
+    if (!first) out << "\n";
+    out << indent << line;
+    first = false;
+  }
+  return out.str();
+}
+
+std::string rawFg(const std::string& code, const std::string& text) {
+  return code + text;
+}
+
 } // namespace
 
 TerminalMetrics detectMetrics() {
@@ -316,10 +334,11 @@ std::string renderDashboard(const Theme& th, const TerminalMetrics& metrics, con
   const int panelWidth = metrics.compact ? width : std::min(width - 8, 96);
   const int panelLeft = std::max(0, (metrics.columns - panelWidth) / 2);
   std::vector<std::string> command = {
-      color(th, th.amber, "/scope") + color(th, th.gray, "  command surface"),
-      color(th, th.white, "› ") + color(th, th.gray, "format  ·  login root root  ·  scope tree  ·  map refcount"),
-      color(th, th.blue, "Build") + "  observable inode/block/journal/COW kernel " + color(th, th.dim, "terminal-first")};
-  out << std::string(panelLeft, ' ') << box(th, "command focus", command, panelWidth, "amber") << "\n\n";
+      rawFg(th.amber, "/scope") + rawFg(th.gray, "  command surface") + th.reset,
+      rawFg(th.white, "› ") + rawFg(th.gray, "format  ·  login root root  ·  scope tree  ·  map refcount") + th.reset,
+      rawFg(th.blue, "Build") + rawFg(th.white, "  observable inode/block/journal/COW kernel ") +
+          rawFg(th.dim, "terminal-first") + th.reset};
+  out << indentBlock(box(th, "command focus", command, panelWidth, "amber"), panelLeft) << "\n\n";
   const int cardGap = 2;
   const int cardWidth = metrics.compact ? width : (width - 2 * cardGap) / 3;
   auto volume = box(th, "Volume", {
@@ -335,9 +354,9 @@ std::string renderDashboard(const Theme& th, const TerminalMetrics& metrics, con
       "inode  " + progress(th, status.inodes, status.inodeTotal, std::max(10, cardWidth - 18), "amber"),
       "snap   " + color(th, th.magenta, std::to_string(status.snapshots))}, cardWidth, "magenta");
   if (metrics.compact) {
-    out << indent << volume << "\n" << indent << session << "\n" << indent << obs << "\n";
+    out << indentBlock(volume, left) << "\n" << indentBlock(session, left) << "\n" << indentBlock(obs, left) << "\n";
   } else {
-    out << indent << columns({volume, session, obs}, cardGap);
+    out << indentBlock(columns({volume, session, obs}, cardGap), left);
   }
   out << indent << color(th, th.dim, "tips  tab commands   ctrl+p palette   trace show   snapshot diff   fsck") << "\n\n";
   if (th.ansi) out << th.reset;
@@ -350,11 +369,15 @@ std::string renderPrompt(const Theme& th, const TerminalMetrics& metrics, const 
   const auto leftInfo = " " + truncate(status.cwd, std::max(12, width / 3)) + " ";
   const auto mid = status.user + "  tx#" + std::to_string(status.txid);
   std::ostringstream out;
-  out << std::string(left, ' ');
-  out << color(th, th.blue, "▌");
-  out << color(th, th.amber, leftInfo);
-  out << color(th, th.dim, padRight(mid, std::max(16, width / 4)));
-  out << color(th, th.white, " › ");
+  if (!th.ansi || th.mono) {
+    out << std::string(left, ' ') << "▌" << leftInfo << padRight(mid, std::max(16, width / 4)) << " › ";
+    return out.str();
+  }
+  const auto cursor = th.panel2 + th.blue + "▌" + th.amber + leftInfo +
+                      th.dim + padRight(mid, std::max(16, width / 4)) + th.white + " › ";
+  const int cursorWidth = displayWidth(cursor);
+  out << std::string(left, ' ') << cursor << std::string(std::max(0, width - cursorWidth), ' ')
+      << th.reset << "\r" << std::string(left, ' ') << cursor;
   return out.str();
 }
 
