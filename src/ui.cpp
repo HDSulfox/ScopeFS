@@ -57,7 +57,9 @@ std::string zh(const std::string& key) {
       {"class_graph", "身份类图"},
       {"acl_graph", "ACL 图"},
       {"read_result", "读取结果"},
-      {"offset", "偏移"}};
+      {"offset", "偏移"},
+      {"read_advance", "本次读取"},
+      {"fd_offset", "fd 偏移"}};
   const auto it = dict.find(key);
   return it == dict.end() ? key : it->second;
 }
@@ -98,7 +100,9 @@ std::string en(const std::string& key) {
       {"class_graph", "Class graph"},
       {"acl_graph", "ACL graph"},
       {"read_result", "Read result"},
-      {"offset", "offset"}};
+      {"offset", "offset"},
+      {"read_advance", "read"},
+      {"fd_offset", "fd offset"}};
   const auto it = dict.find(key);
   return it == dict.end() ? key : it->second;
 }
@@ -722,18 +726,21 @@ std::string renderReadData(const Theme& th, const TerminalMetrics& metrics, cons
   const int width = std::min(metrics.columns, metrics.wide ? 132 : 112);
   const int dataWidth = std::max(24, width - 8);
   std::string shown = truncate(data, dataWidth);
+  const auto advanced = newOffset >= oldOffset ? newOffset - oldOffset : 0;
   std::string ruler(dataWidth, ' ');
   for (int i = 0; i < dataWidth; i += 8) {
     const auto tick = std::to_string(i);
     for (std::size_t j = 0; j < tick.size() && i + static_cast<int>(j) < dataWidth; ++j) ruler[i + j] = tick[j];
   }
   std::string pointer(dataWidth, ' ');
-  const auto pos = static_cast<int>(std::min<std::uint64_t>(newOffset, dataWidth ? dataWidth - 1 : 0));
+  const auto pos = static_cast<int>(std::min<std::uint64_t>(advanced, dataWidth ? dataWidth - 1 : 0));
   if (pos >= 0 && pos < dataWidth) pointer[pos] = '^';
   return box(th, text(th, "read_result"), {
       color(th, th.dim, ruler),
       color(th, th.white, padRight(shown, dataWidth)),
-      color(th, th.blue, pointer) + " fd " + std::to_string(oldOffset) + " -> " + std::to_string(newOffset)}, width, "blue") + "\n";
+      color(th, th.blue, pointer),
+      color(th, th.gray, text(th, "read_advance") + " +" + std::to_string(advanced) +
+          "  " + text(th, "fd_offset") + " " + std::to_string(oldOffset) + " -> " + std::to_string(newOffset))}, width, "blue") + "\n";
 }
 
 std::string renderSnapshotDiff(const Theme& th, const TerminalMetrics& metrics, const std::vector<std::string>& diffLines) {
