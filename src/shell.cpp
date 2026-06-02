@@ -419,6 +419,17 @@ std::vector<std::string> Shell::completionCandidates(const std::string& line, st
 
   const auto cmd = lower(prior.front());
   const std::size_t tokenIndex = prior.size();
+  if (cmd == "open" && tokenIndex == 1) {
+    return kernel_.completePath(token, false);
+  }
+  if (cmd == "open" && tokenIndex == 2) {
+    addMatches({"r", "w", "rw", "append", "truncate"});
+    return matches;
+  }
+  if (cmd == "open" && tokenIndex >= 3) {
+    addMatches({"lock", "nolock"});
+    return matches;
+  }
   const auto subIt = subcommands.find(cmd);
   if (subIt != subcommands.end() && tokenIndex == 1) {
     addMatches(subIt->second);

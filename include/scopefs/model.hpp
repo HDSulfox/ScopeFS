@@ -108,6 +108,7 @@ struct OpenFile {
   std::uint32_t inode = 0;
   std::string path;
   std::string flags;
+  bool locked = false;
   std::uint64_t offset = 0;
 };
 

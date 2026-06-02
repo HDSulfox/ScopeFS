@@ -55,6 +55,13 @@ bool removeAllRetry(const std::filesystem::path& path) {
   return !std::filesystem::exists(path);
 }
 
+bool tryCreateDir(const std::filesystem::path& path) {
+  std::error_code ec;
+  const bool created = std::filesystem::create_directory(path, ec);
+  if (created) return true;
+  return false;
+}
+
 } // namespace
 
 VolumeCoordinator::ScopedLock::ScopedLock(VolumeCoordinator* owner, std::filesystem::path path, std::string kind)
@@ -157,7 +164,7 @@ VolumeCoordinator::ScopedLock VolumeCoordinator::acquireTxLock(const std::string
           break;
         }
       }
-      if (!readersActive && std::filesystem::create_directory(txDir())) {
+      if (!readersActive && tryCreateDir(txDir())) {
         LockRecord record;
         record.kind = "tx";
         record.mode = "exclusive";
@@ -405,7 +412,7 @@ VolumeCoordinator::ScopedLock VolumeCoordinator::acquireMutex() const {
   const auto timeoutMs = 5000;
   const auto start = std::chrono::steady_clock::now();
   while (true) {
-    if (std::filesystem::create_directory(mutexDir())) {
+    if (tryCreateDir(mutexDir())) {
       return ScopedLock(const_cast<VolumeCoordinator*>(this), mutexDir(), "mutex");
     }
     if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count() >= timeoutMs) {
@@ -433,8 +440,7 @@ bool VolumeCoordinator::isRecordStale(const LockRecord& record) const {
   if (!isPidAlive(record.pid)) return true;
   const auto sessionFile = sessionsDir() / (record.sessionId + ".session");
   if (!std::filesystem::exists(sessionFile)) return true;
-  const auto age = std::filesystem::file_time_type::clock::now() - std::filesystem::last_write_time(sessionFile);
-  return age > std::chrono::seconds(10);
+  return false;
 }
 
 LockRecord VolumeCoordinator::readRecord(const std::filesystem::path& path) const {

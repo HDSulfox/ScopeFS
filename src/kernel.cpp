@@ -53,6 +53,22 @@ std::string rightForFlag(const std::string& flags) {
   return "r";
 }
 
+bool openLockRequested(const std::vector<std::string>& args, std::string* invalid) {
+  bool locked = false;
+  for (std::size_t i = 3; i < args.size(); ++i) {
+    const auto option = lower(args[i]);
+    if (option == "lock" || option == "--lock" || option == "locked") {
+      locked = true;
+    } else if (option == "nolock" || option == "--no-lock") {
+      locked = false;
+    } else {
+      if (invalid) *invalid = args[i];
+      return false;
+    }
+  }
+  return locked;
+}
+
 std::string blockFlagsForId(std::uint32_t block) {
   if (block == config::kSuperBlock) return "super";
   if (block >= config::kBlockMetaStart && block < config::kBlockMetaStart + config::kBlockMetaBlocks) return "refcount";
@@ -347,6 +363,7 @@ void FileSystemKernel::unmountClean() {
       auto it = state_.inodes.find(of.inode);
       if (it != state_.inodes.end() && it->second.openCount > 0) --it->second.openCount;
       if (systemOpen_[of.inode] > 0) --systemOpen_[of.inode];
+      if (of.locked) coordinator_.releaseInodeLock(of.inode, fd);
       if (it != state_.inodes.end() && it->second.deletePending && it->second.openCount == 0 &&
           coordinator_.inodeHolderCount(of.inode, true) == 0) {
         releaseInode(of.inode, true);
@@ -1236,7 +1253,7 @@ CommandResult FileSystemKernel::cmdLogout() {
     auto it = state_.inodes.find(of.inode);
     if (it != state_.inodes.end() && it->second.openCount > 0) --it->second.openCount;
     if (systemOpen_[of.inode] > 0) --systemOpen_[of.inode];
-    coordinator_.releaseInodeLock(of.inode, fd);
+    if (of.locked) coordinator_.releaseInodeLock(of.inode, fd);
     if (it != state_.inodes.end() && it->second.deletePending && it->second.openCount == 0 &&
         coordinator_.inodeHolderCount(of.inode, true) == 0) {
       releaseInode(of.inode, true);
@@ -1357,7 +1374,12 @@ CommandResult FileSystemKernel::cmdCreate(const std::vector<std::string>& args) 
 }
 
 CommandResult FileSystemKernel::cmdOpen(const std::vector<std::string>& args) {
-  if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("open <path> <r|w|rw|append|truncate>"));
+  if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("open <path> <r|w|rw|append|truncate> [lock]"));
+  std::string invalidOption;
+  const bool requestedLock = openLockRequested(args, &invalidOption);
+  if (!invalidOption.empty()) {
+    return err(ErrorCode::InvalidArgument, "unknown open option: " + invalidOption);
+  }
   ResolvedPath rp;
   try { rp = resolve(args[1], true); } catch (const std::exception& ex) { return err(ErrorCode::NotFound, ex.what()); }
   auto& inode = state_.inodes[rp.inode];
@@ -1369,13 +1391,13 @@ CommandResult FileSystemKernel::cmdOpen(const std::vector<std::string>& args) {
   const int plannedFd = session().nextFd;
   const auto lockMode = rightForFlag(args[2]) == "w" ? "write" : "read";
   std::string lockReason;
-  if (!coordinator_.acquireInodeLock(rp.inode, rp.canonical, lockMode, activeUser_, plannedFd, "open " + args[2], &lockReason)) {
+  if (requestedLock && !coordinator_.acquireInodeLock(rp.inode, rp.canonical, lockMode, activeUser_, plannedFd, "open " + args[2], &lockReason)) {
     return err(ErrorCode::LockBusy, lockReason);
   }
   if (args[2].find("truncate") != std::string::npos) {
     auto tx = beginTx("open.truncate");
     ensureMutablePath(rp.canonical, true, tx.id, &rp);
-    if (rp.inode != inode.id) {
+    if (requestedLock && rp.inode != inode.id) {
       coordinator_.releaseInodeLock(inode.id, plannedFd);
       if (!coordinator_.acquireInodeLock(rp.inode, rp.canonical, "write", activeUser_, plannedFd, "open truncate", &lockReason)) {
         return err(ErrorCode::LockBusy, lockReason);
@@ -1390,12 +1412,13 @@ CommandResult FileSystemKernel::cmdOpen(const std::vector<std::string>& args) {
   of.inode = rp.inode;
   of.path = rp.canonical;
   of.flags = args[2];
+  of.locked = requestedLock;
   of.offset = args[2].find("append") != std::string::npos ? state_.inodes[rp.inode].size : 0;
   session().openFiles[of.fd] = of;
   ++state_.inodes[rp.inode].openCount;
   ++systemOpen_[rp.inode];
   trace_.emit(0, "open.fd", std::to_string(of.fd), "-", std::to_string(rp.inode), "file opened", "ok");
-  return ok("fd " + std::to_string(of.fd) + " -> " + rp.canonical + "\n");
+  return ok("fd " + std::to_string(of.fd) + " -> " + rp.canonical + (requestedLock ? " [lock]\n" : "\n"));
 }
 
 CommandResult FileSystemKernel::cmdRead(const std::vector<std::string>& args) {
@@ -1443,11 +1466,12 @@ CommandResult FileSystemKernel::cmdWrite(const std::vector<std::string>& args, c
   auto tx = beginTx("write");
   ResolvedPath rp;
   const auto oldInode = it->second.inode;
+  const bool fdLocked = it->second.locked;
   const auto fdForLock = fd;
   ensureMutablePath(it->second.path, true, tx.id, &rp);
   it = session().openFiles.find(fd);
   it->second.inode = rp.inode;
-  if (oldInode != rp.inode) {
+  if (fdLocked && oldInode != rp.inode) {
     coordinator_.releaseInodeLock(oldInode, fdForLock);
     std::string lockReason;
     if (!coordinator_.acquireInodeLock(rp.inode, rp.canonical, "write", activeUser_, fdForLock, "write COW", &lockReason)) {
@@ -1477,7 +1501,7 @@ CommandResult FileSystemKernel::cmdClose(const std::vector<std::string>& args) {
   auto inodeIt = state_.inodes.find(inodeId);
   if (inodeIt != state_.inodes.end() && inodeIt->second.openCount > 0) --inodeIt->second.openCount;
   if (systemOpen_[inodeId] > 0) --systemOpen_[inodeId];
-  coordinator_.releaseInodeLock(inodeId, fd);
+  if (it->second.locked) coordinator_.releaseInodeLock(inodeId, fd);
   session().openFiles.erase(it);
   if (inodeIt != state_.inodes.end() && inodeIt->second.deletePending && inodeIt->second.openCount == 0 &&
       coordinator_.inodeHolderCount(inodeId, true) == 0) {
@@ -1521,12 +1545,16 @@ CommandResult FileSystemKernel::cmdTruncate(const std::vector<std::string>& args
   std::string path = args[1];
   bool byFd = false;
   int fd = -1;
+  std::uint32_t oldFdInode = 0;
+  bool fdLocked = false;
   if (std::all_of(args[1].begin(), args[1].end(), ::isdigit)) {
     byFd = true;
     fd = std::stoi(args[1]);
     auto it = session().openFiles.find(fd);
     if (it == session().openFiles.end()) return err(ErrorCode::InvalidFd, "fd not open");
     path = it->second.path;
+    oldFdInode = it->second.inode;
+    fdLocked = it->second.locked;
   } else {
     ResolvedPath rp;
     try { rp = resolve(args[1], true); } catch (const std::exception& ex) { return err(ErrorCode::NotFound, ex.what()); }
@@ -1539,7 +1567,16 @@ CommandResult FileSystemKernel::cmdTruncate(const std::vector<std::string>& args
   ResolvedPath rp;
   ensureMutablePath(path, true, tx.id, &rp);
   inodeId = rp.inode;
-  if (byFd) session().openFiles[fd].inode = inodeId;
+  if (byFd) {
+    session().openFiles[fd].inode = inodeId;
+    if (fdLocked && oldFdInode != inodeId) {
+      coordinator_.releaseInodeLock(oldFdInode, fd);
+      std::string lockReason;
+      if (!coordinator_.acquireInodeLock(inodeId, rp.canonical, "write", activeUser_, fd, "truncate COW", &lockReason)) {
+        return err(ErrorCode::LockBusy, lockReason);
+      }
+    }
+  }
   auto data = readFileData(state_.inodes[inodeId]);
   data.resize(newSize, '\0');
   setFileData(state_.inodes[inodeId], data, tx.id);
@@ -2087,7 +2124,7 @@ CommandResult FileSystemKernel::cmdHelp() {
   if (langName_ == "zh") {
     out << "ScopeFS 命令\n"
         << "  format | login <用户> [密码] | logout | whoami | exit\n"
-        << "  mkdir/rmdir/chdir/dir/create/open/read/write/close/delete/rm/truncate\n"
+        << "  mkdir/rmdir/chdir/dir/create/open [lock]/read/write/close/delete/rm/truncate\n"
         << "  trace on/off/show [数量]/save <文件>/replay <文件>/step/clear\n"
         << "  scope [inode|block|journal|open|locks|tree] | map [blocks|inode|journal|refcount|owner]\n"
         << "  snapshot create/list/show/diff/rollback/delete | clone <源> <目标>\n"
@@ -2096,7 +2133,7 @@ CommandResult FileSystemKernel::cmdHelp() {
   } else {
     out << "ScopeFS commands\n"
         << "  format | login <user> [password] | logout | whoami | exit\n"
-        << "  mkdir/rmdir/chdir/dir/create/open/read/write/close/delete/rm/truncate\n"
+        << "  mkdir/rmdir/chdir/dir/create/open [lock]/read/write/close/delete/rm/truncate\n"
         << "  trace on/off/show [n]/save <file>/replay <file>/step/clear\n"
         << "  scope [inode|block|journal|open|locks|tree] | map [blocks|inode|journal|refcount|owner]\n"
         << "  snapshot create/list/show/diff/rollback/delete | clone <src> <dst>\n"
@@ -2221,7 +2258,8 @@ std::string FileSystemKernel::renderScope(const std::string& what) const {
       for (const auto& [user, sess] : sessions_) {
         for (const auto& [fd, of] : sess.openFiles) {
           body.push_back(user + " fd=" + std::to_string(fd) + " inode=#" + std::to_string(of.inode) +
-                         " offset=" + std::to_string(of.offset) + " " + of.flags + " " + of.path);
+                         " offset=" + std::to_string(of.offset) + " " + of.flags +
+                         (of.locked ? " lock " : " nolock ") + of.path);
         }
       }
       for (const auto& lock : coordinator_.listLocks(false)) {
@@ -2233,10 +2271,11 @@ std::string FileSystemKernel::renderScope(const std::string& what) const {
       if (body.empty()) body.push_back("no open file descriptors");
       return ui::box(th, "Open file tables", body, std::min(metrics.columns, metrics.wide ? 132 : 112), "blue") + "\n";
     }
-    out << "user fd inode offset flags path\n";
+    out << "user fd inode offset flags lock path\n";
     for (const auto& [user, sess] : sessions_) {
       for (const auto& [fd, of] : sess.openFiles) {
-        out << user << " " << fd << " " << of.inode << " " << of.offset << " " << of.flags << " " << of.path << "\n";
+        out << user << " " << fd << " " << of.inode << " " << of.offset << " " << of.flags << " "
+            << (of.locked ? "yes" : "no") << " " << of.path << "\n";
       }
     }
     out << "system open table\n";

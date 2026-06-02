@@ -131,7 +131,7 @@ exit
 $holder = Start-Scope
 Send-Scope $holder @"
 login root root
-open /root/locked rw
+open /root/locked rw lock
 sleep 2500
 close 3
 exit
@@ -139,7 +139,7 @@ exit
 Wait-ForPattern "/root/locked" | Out-Null
 $busy = Run-ScopeText @"
 login root root
-open /root/locked rw
+open /root/locked rw lock
 exit
 "@
 if ($busy -notmatch "E_LOCK_BUSY") {
@@ -147,6 +147,34 @@ if ($busy -notmatch "E_LOCK_BUSY") {
   throw "second writer did not observe E_LOCK_BUSY"
 }
 Finish-Scope $holder | Out-Null
+
+Write-Host "== same-file write without explicit lock is allowed =="
+Run-ScopeText @"
+format
+login root root
+create /root/free 0644
+exit
+"@ | Out-Null
+$unlockedHolder = Start-Scope
+Send-Scope $unlockedHolder @"
+login root root
+open /root/free w
+sleep 1500
+close 3
+exit
+"@
+Start-Sleep -Milliseconds 300
+$unlocked = Run-ScopeText @"
+login root root
+open /root/free w
+close 3
+exit
+"@
+if ($unlocked -match "E_LOCK_BUSY" -or $unlocked -notmatch "fd 3 -> /root/free") {
+  Write-Host $unlocked
+  throw "unlocked open unexpectedly conflicted"
+}
+Finish-Scope $unlockedHolder | Out-Null
 
 Write-Host "== open delete delayed reclaim across terminals =="
 Run-ScopeText @"
@@ -161,7 +189,7 @@ exit
 $reader = Start-Scope
 Send-Scope $reader @"
 login root root
-open /root/delay r
+open /root/delay r lock
 sleep 2500
 read 3 64
 close 3
