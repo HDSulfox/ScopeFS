@@ -122,6 +122,7 @@ class FileSystemKernel {
   void recoveryFromJournal(const std::vector<std::string>& journal);
   bool reloadIfEpochChanged();
   void reloadVolumeFromDisk(const std::string& reason);
+  void rebuildOpenTables();
   bool isMutationCommand(const std::string& cmd, const std::vector<std::string>& args) const;
 
   Tx beginTx(const std::string& name);
@@ -177,7 +178,6 @@ class FileSystemKernel {
   CommandResult cmdChclass(const std::vector<std::string>& args);
   CommandResult cmdFsck(const std::vector<std::string>& args);
   CommandResult cmdCrash(const std::vector<std::string>& args);
-  CommandResult cmdLock(const std::vector<std::string>& args);
   CommandResult cmdSleep(const std::vector<std::string>& args);
   CommandResult cmdTheme(const std::vector<std::string>& args);
   CommandResult cmdLang(const std::vector<std::string>& args);
@@ -185,7 +185,7 @@ class FileSystemKernel {
 
   std::string renderDir(std::uint32_t inode, const std::string& path) const;
   std::string renderScope(const std::string& what) const;
-  std::string renderTree(std::uint32_t inode, const std::string& prefix, const std::string& name, std::set<std::uint32_t>& seen) const;
+  std::string renderTree(std::uint32_t inode, const std::string& prefix, const std::string& name, bool last, std::set<std::uint32_t>& seen) const;
   std::string renderMap(const std::string& what) const;
   std::string fsck(bool repair, bool light);
   std::map<std::string, std::uint32_t> flattenTree(std::uint32_t root) const;

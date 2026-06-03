@@ -126,7 +126,6 @@ void VolumeCoordinator::heartbeat(const std::string& user, const std::string& co
 }
 
 void VolumeCoordinator::shutdownClean() {
-  releaseAllInodeLocks();
   if (!sessionId_.empty()) removeAllRetry(sessionPath());
   trace_.emit(0, "coord.session.stop", sessionId_, "-", std::to_string(pid_), "clean session shutdown", "ok");
 }
@@ -225,84 +224,6 @@ VolumeCoordinator::ScopedLock VolumeCoordinator::acquireReadLock(const std::stri
 
 bool VolumeCoordinator::hasTxLock() const { return txDepth_ > 0; }
 
-bool VolumeCoordinator::acquireInodeLock(std::uint32_t inode,
-                                         const std::string& path,
-                                         const std::string& mode,
-                                         const std::string& user,
-                                         int fd,
-                                         const std::string& reason,
-                                         std::string* error) {
-  auto mutex = acquireMutex();
-  std::size_t removed = 0;
-  cleanupStaleLocksUnlocked(&removed);
-  const bool wantWrite = mode == "write";
-  for (const auto& lockFile : inodeLockFiles()) {
-    const auto record = readRecord(lockFile);
-    if (record.kind != "inode" || record.inode != inode || record.sessionId == sessionId_) continue;
-    const bool existingWrite = record.mode == "write";
-    if (wantWrite || existingWrite) {
-      if (error) *error = "inode " + std::to_string(inode) + " locked by session " + record.sessionId + " mode=" + record.mode;
-      trace_.emit(0, "inode.lock.conflict", std::to_string(inode), mode, record.sessionId, reason, "busy");
-      return false;
-    }
-  }
-  LockRecord record;
-  record.kind = "inode";
-  record.mode = mode;
-  record.sessionId = sessionId_;
-  record.pid = pid_;
-  record.user = user;
-  record.inode = inode;
-  record.fd = fd;
-  record.path = path;
-  record.reason = reason;
-  const auto file = inodeLocksDir() / ("inode_" + std::to_string(inode) + "_" + sessionId_ + "_" + std::to_string(fd) + ".lock");
-  writeRecord(file, record);
-  trace_.emit(0, "inode.lock.acquire", std::to_string(inode), "-", mode, path, "ok");
-  return true;
-}
-
-void VolumeCoordinator::releaseInodeLock(std::uint32_t inode, int fd) {
-  const auto prefix = "inode_" + std::to_string(inode) + "_" + sessionId_ + "_" + std::to_string(fd);
-  for (const auto& lockFile : inodeLockFiles()) {
-    if (lockFile.filename().string().rfind(prefix, 0) == 0) {
-      removeAllRetry(lockFile);
-      trace_.emit(0, "inode.lock.release", std::to_string(inode), std::to_string(fd), sessionId_, "fd close", "ok");
-    }
-  }
-}
-
-void VolumeCoordinator::releaseAllInodeLocks() {
-  for (const auto& lockFile : inodeLockFiles()) {
-    const auto record = readRecord(lockFile);
-    if (record.kind == "inode" && record.sessionId == sessionId_) {
-      removeAllRetry(lockFile);
-      trace_.emit(0, "inode.lock.release", std::to_string(record.inode), std::to_string(record.fd), sessionId_, "session cleanup", "ok");
-    }
-  }
-}
-
-std::size_t VolumeCoordinator::inodeHolderCount(std::uint32_t inode, bool includeSelf) const {
-  std::size_t count = 0;
-  for (const auto& lockFile : inodeLockFiles()) {
-    const auto record = readRecord(lockFile);
-    if (record.kind != "inode" || record.inode != inode) continue;
-    if (!includeSelf && record.sessionId == sessionId_) continue;
-    if (!isRecordStale(record)) ++count;
-  }
-  return count;
-}
-
-bool VolumeCoordinator::hasAnyWriteHolder(bool includeSelf) const {
-  for (const auto& lockFile : inodeLockFiles()) {
-    const auto record = readRecord(lockFile);
-    if (record.kind != "inode" || record.mode != "write") continue;
-    if (!includeSelf && record.sessionId == sessionId_) continue;
-    if (!isRecordStale(record)) return true;
-  }
-  return false;
-}
-
 std::vector<LockRecord> VolumeCoordinator::listLocks(bool includeStale) const {
   std::vector<LockRecord> out;
   if (std::filesystem::exists(txDir() / "holder")) {
@@ -312,11 +233,6 @@ std::vector<LockRecord> VolumeCoordinator::listLocks(bool includeStale) const {
   }
   for (const auto& readFile : readLockFiles()) {
     auto record = readRecord(readFile);
-    record.stale = isRecordStale(record);
-    if (includeStale || !record.stale) out.push_back(record);
-  }
-  for (const auto& lockFile : inodeLockFiles()) {
-    auto record = readRecord(lockFile);
     record.stale = isRecordStale(record);
     if (includeStale || !record.stale) out.push_back(record);
   }
@@ -368,7 +284,6 @@ void VolumeCoordinator::broadcastCrash(const std::string& reason) {
   std::ofstream out(signalPath(), std::ios::binary | std::ios::trunc);
   out << "SIGNAL|" << epoch << "|" << encode(sessionId_) << "|" << pid_ << "|" << encode(reason) << "|" << encode(nowIso()) << "\n";
   observedSignalEpoch_ = epoch;
-  trace_.emit(0, "coord.signal.crash", "signal", "-", std::to_string(epoch), reason, "crash");
 }
 
 bool VolumeCoordinator::hasPendingCrashSignal(std::string* reason) {
@@ -383,13 +298,11 @@ bool VolumeCoordinator::hasPendingCrashSignal(std::string* reason) {
   if (epoch <= observedSignalEpoch_ || sender == sessionId_) return false;
   observedSignalEpoch_ = epoch;
   if (reason) *reason = why.empty() ? "broadcast crash signal" : why;
-  trace_.emit(0, "coord.signal.receive", "signal", sender, std::to_string(epoch), why, "crash");
   return true;
 }
 
 std::filesystem::path VolumeCoordinator::workspace() const { return config::workspaceDir(); }
 std::filesystem::path VolumeCoordinator::sessionsDir() const { return workspace() / "sessions"; }
-std::filesystem::path VolumeCoordinator::inodeLocksDir() const { return workspace() / "inode_locks"; }
 std::filesystem::path VolumeCoordinator::readLocksDir() const { return workspace() / "read_locks"; }
 std::filesystem::path VolumeCoordinator::mutexDir() const { return workspace() / "scopefs.lock"; }
 std::filesystem::path VolumeCoordinator::txDir() const { return workspace() / "tx.lock"; }
@@ -400,7 +313,6 @@ std::filesystem::path VolumeCoordinator::sessionPath() const { return sessionsDi
 void VolumeCoordinator::ensureLayout() const {
   std::filesystem::create_directories(workspace());
   std::filesystem::create_directories(sessionsDir());
-  std::filesystem::create_directories(inodeLocksDir());
   std::filesystem::create_directories(readLocksDir());
   if (!std::filesystem::exists(epochPath())) {
     std::ofstream out(epochPath(), std::ios::binary | std::ios::trunc);
@@ -467,15 +379,6 @@ LockRecord VolumeCoordinator::readRecord(const std::filesystem::path& path) cons
     record.user = field(f, 3);
     record.reason = field(f, 4);
     record.mode = "shared";
-  } else if (record.kind == "inode") {
-    record.sessionId = field(f, 1);
-    record.pid = numberField(f, 2);
-    record.user = field(f, 3);
-    record.inode = static_cast<std::uint32_t>(numberField(f, 4));
-    record.fd = static_cast<int>(numberField(f, 5));
-    record.mode = field(f, 6);
-    record.path = field(f, 7);
-    record.reason = field(f, 8);
   }
   return record;
 }
@@ -489,20 +392,7 @@ void VolumeCoordinator::writeRecord(const std::filesystem::path& path, const Loc
   } else if (record.kind == "read") {
     out << "READ|" << encode(record.sessionId) << "|" << record.pid << "|" << encode(record.user) << "|"
         << encode(record.reason) << "\n";
-  } else if (record.kind == "inode") {
-    out << "INODE|" << encode(record.sessionId) << "|" << record.pid << "|" << encode(record.user) << "|"
-        << record.inode << "|" << record.fd << "|" << encode(record.mode) << "|" << encode(record.path) << "|"
-        << encode(record.reason) << "\n";
   }
-}
-
-std::vector<std::filesystem::path> VolumeCoordinator::inodeLockFiles() const {
-  std::vector<std::filesystem::path> out;
-  if (!std::filesystem::exists(inodeLocksDir())) return out;
-  for (const auto& entry : std::filesystem::directory_iterator(inodeLocksDir())) {
-    if (entry.is_regular_file()) out.push_back(entry.path());
-  }
-  return out;
 }
 
 std::vector<std::filesystem::path> VolumeCoordinator::readLockFiles() const {
@@ -525,10 +415,6 @@ void VolumeCoordinator::cleanupStaleLocksUnlocked(std::size_t* removed) const {
   for (const auto& readFile : readLockFiles()) {
     const auto record = readRecord(readFile);
     if (isRecordStale(record)) drop(readFile);
-  }
-  for (const auto& lockFile : inodeLockFiles()) {
-    const auto record = readRecord(lockFile);
-    if (isRecordStale(record)) drop(lockFile);
   }
   if (std::filesystem::exists(sessionsDir())) {
     for (const auto& entry : std::filesystem::directory_iterator(sessionsDir())) {

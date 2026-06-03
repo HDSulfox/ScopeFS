@@ -53,22 +53,6 @@ std::string rightForFlag(const std::string& flags) {
   return "r";
 }
 
-bool openLockRequested(const std::vector<std::string>& args, std::string* invalid) {
-  bool locked = false;
-  for (std::size_t i = 3; i < args.size(); ++i) {
-    const auto option = lower(args[i]);
-    if (option == "lock" || option == "--lock" || option == "locked") {
-      locked = true;
-    } else if (option == "nolock" || option == "--no-lock") {
-      locked = false;
-    } else {
-      if (invalid) *invalid = args[i];
-      return false;
-    }
-  }
-  return locked;
-}
-
 std::string blockFlagsForId(std::uint32_t block) {
   if (block == config::kSuperBlock) return "super";
   if (block >= config::kBlockMetaStart && block < config::kBlockMetaStart + config::kBlockMetaBlocks) return "refcount";
@@ -182,7 +166,7 @@ void FileSystemKernel::checkExternalCrashSignal() {
   std::string reason;
   if (!coordinator_.hasPendingCrashSignal(&reason)) return;
   coordinator_.markAbnormalExit();
-  trace_.emit(0, "coord.signal.crash", "signal", "-", reason, "external crash signal", "crash");
+  trace_.emit(0, "system.crash.detected", "terminal", "-", reason, "external crash signal received", "crash");
   throw CrashException("signal:" + reason);
 }
 
@@ -224,10 +208,8 @@ std::string FileSystemKernel::uiLanguageName() const { return langName_; }
 bool FileSystemKernel::uiAnsiEnabled() const { return ansiUi_; }
 
 std::string FileSystemKernel::prompt() const {
-  if (!mounted_) return "scopefs[unmounted]> ";
-  const auto user = activeUser_.empty() ? "-" : activeUser_;
-  const auto cwd = activeUser_.empty() ? "/" : session().cwd;
-  return "scopefs[" + user + " " + cwd + "]> ";
+  if (!mounted_ || activeUser_.empty()) return "$ ";
+  return session().cwd + " " + activeUser_ + " $ ";
 }
 
 std::vector<std::string> FileSystemKernel::completePath(const std::string& token, bool directoriesOnly) const {
@@ -274,8 +256,8 @@ std::string FileSystemKernel::usage(const std::string& spec) const {
   if (langName_ == "en") return "usage: " + spec;
   std::string out = spec;
   const std::vector<std::pair<std::string, std::string>> repl = {
-      {"<user_or_class>", "<用户或身份类>"},
-      {"<class_name>", "<身份类名>"},
+      {"<user_or_class>", "<用户或用户组>"},
+      {"<class_name>", "<用户组名>"},
       {"[password]", "[密码]"},
       {"[mode]", "[模式]"},
       {"[size]", "[大小]"},
@@ -285,7 +267,7 @@ std::string FileSystemKernel::usage(const std::string& spec) const {
       {"<constraints>", "<约束>"},
       {"<rights>", "<权限>"},
       {"<event>", "<事件>"},
-      {"<class>", "<身份类>"},
+      {"<class>", "<用户组>"},
       {"<file>", "<文件>"},
       {"<user>", "<用户>"},
       {"<path>", "<路径>"},
@@ -315,7 +297,7 @@ std::string FileSystemKernel::msg(const std::string& en, const std::string& zh) 
 
 bool FileSystemKernel::requiresLogin(const std::string& command) const {
   static const std::set<std::string> allowed = {
-      "help", "exit", "format", "login", "trace", "theme", "lang", "lock", "sleep"};
+      "help", "exit", "format", "login", "trace", "theme", "lang", "sleep"};
   if (allowed.count(command)) return false;
   return true;
 }
@@ -357,15 +339,12 @@ void FileSystemKernel::boot() {
 
 void FileSystemKernel::unmountClean() {
   if (!mounted_) return;
-  coordinator_.releaseAllInodeLocks();
   for (auto& [user, sess] : sessions_) {
     for (auto& [fd, of] : sess.openFiles) {
       auto it = state_.inodes.find(of.inode);
       if (it != state_.inodes.end() && it->second.openCount > 0) --it->second.openCount;
       if (systemOpen_[of.inode] > 0) --systemOpen_[of.inode];
-      if (of.locked) coordinator_.releaseInodeLock(of.inode, fd);
-      if (it != state_.inodes.end() && it->second.deletePending && it->second.openCount == 0 &&
-          coordinator_.inodeHolderCount(of.inode, true) == 0) {
+      if (it != state_.inodes.end() && it->second.deletePending && it->second.openCount == 0) {
         releaseInode(of.inode, true);
       }
     }
@@ -398,14 +377,14 @@ CommandResult FileSystemKernel::execute(const std::vector<std::string>& args, co
     if (mutation) {
       txLock = coordinator_.acquireTxLock(cmd);
       if (mounted_ && device_.volumeExists()) reloadVolumeFromDisk("pre-mutation " + cmd);
-    } else if (mounted_ && cmd != "lock" && cmd != "sleep" && cmd != "help" && cmd != "exit" &&
+    } else if (mounted_ && cmd != "sleep" && cmd != "help" && cmd != "exit" &&
                cmd != "theme" && cmd != "lang") {
       readLock = coordinator_.acquireReadLock(cmd);
       reloadIfEpochChanged();
     } else if (mounted_) {
       reloadIfEpochChanged();
     }
-    if (!mounted_ && cmd != "format" && cmd != "help" && cmd != "exit" && cmd != "trace" && cmd != "lang" && cmd != "lock" && cmd != "sleep") {
+    if (!mounted_ && cmd != "format" && cmd != "help" && cmd != "exit" && cmd != "trace" && cmd != "lang" && cmd != "sleep") {
       return err(ErrorCode::InvalidCommand, msg("volume is not mounted; run format first", "卷尚未挂载；请先运行 format"));
     }
     if (requiresLogin(cmd)) {
@@ -439,7 +418,6 @@ CommandResult FileSystemKernel::execute(const std::vector<std::string>& args, co
     if (cmd == "chclass") return cmdChclass(args);
     if (cmd == "fsck") return cmdFsck(args);
     if (cmd == "crash") return cmdCrash(args);
-    if (cmd == "lock") return cmdLock(args);
     if (cmd == "sleep") return cmdSleep(args);
     if (cmd == "theme") return cmdTheme(args);
     if (cmd == "lang") return cmdLang(args);
@@ -765,8 +743,27 @@ void FileSystemKernel::reloadVolumeFromDisk(const std::string& reason) {
   if (!device_.volumeExists()) return;
   const auto before = state_.super.nextTxid;
   deserializeState(device_.readAll());
+  rebuildOpenTables();
   mounted_ = true;
   trace_.emit(0, "coord.epoch.reload", "volume", std::to_string(before), std::to_string(state_.super.nextTxid), reason, "ok");
+}
+
+void FileSystemKernel::rebuildOpenTables() {
+  systemOpen_.clear();
+  for (auto& [id, inode] : state_.inodes) {
+    inode.openCount = 0;
+    (void)id;
+  }
+  for (const auto& [user, sess] : sessions_) {
+    for (const auto& [fd, of] : sess.openFiles) {
+      auto it = state_.inodes.find(of.inode);
+      if (it == state_.inodes.end()) continue;
+      ++it->second.openCount;
+      ++systemOpen_[of.inode];
+      (void)fd;
+    }
+    (void)user;
+  }
 }
 
 bool FileSystemKernel::reloadIfEpochChanged() {
@@ -844,15 +841,12 @@ void FileSystemKernel::journalLine(const std::string& line) {
 }
 
 void FileSystemKernel::crashPoint(const std::string& event, const std::string& phase) {
-  const auto full = phase + "." + event;
-  trace_.emit(0, "crash.point", full, "-", "-", "instrumented crash point", "armed_check");
   if (crashMode_ == "before" && crashEvent_ == event && phase == "before") maybeCrashNow();
   if (crashMode_ == "after" && crashEvent_ == event && phase == "after") maybeCrashNow();
   if (crashMode_ == "at" && trace_.nextSeq() >= crashSeq_) maybeCrashNow();
 }
 
 void FileSystemKernel::maybeCrashNow() {
-  trace_.emit(0, "crash.inject", crashMode_, "-", crashEvent_, "simulated abnormal exit", "crash");
   coordinator_.broadcastCrash(crashMode_.empty() ? "now" : crashMode_ + ":" + crashEvent_);
   coordinator_.markAbnormalExit();
   throw CrashException(crashMode_.empty() ? "now" : crashMode_ + ":" + crashEvent_);
@@ -1122,8 +1116,8 @@ bool FileSystemKernel::authCheck(std::uint32_t inodeId, const std::string& right
   }
   const auto classes = effectiveClasses(activeUser_, path);
   if (classes.count(inode.klass) && modeAllows(3)) {
-    if (reason) *reason = "file class mode allows via " + inode.klass;
-    trace_.emit(0, "auth.check", path, "-", right, "class mode", "allow");
+    if (reason) *reason = "file group mode allows via " + inode.klass;
+    trace_.emit(0, "auth.check", path, "-", right, "group mode", "allow");
     return true;
   }
   if (modeAllows(0)) {
@@ -1139,7 +1133,7 @@ bool FileSystemKernel::authCheck(std::uint32_t inodeId, const std::string& right
       return true;
     }
   }
-  if (reason) *reason = "default deny after owner/class/ACL checks";
+  if (reason) *reason = "default deny after owner/group/ACL checks";
   trace_.emit(0, "auth.check", path, "-", right, "default deny", "deny");
   return false;
 }
@@ -1253,9 +1247,7 @@ CommandResult FileSystemKernel::cmdLogout() {
     auto it = state_.inodes.find(of.inode);
     if (it != state_.inodes.end() && it->second.openCount > 0) --it->second.openCount;
     if (systemOpen_[of.inode] > 0) --systemOpen_[of.inode];
-    if (of.locked) coordinator_.releaseInodeLock(of.inode, fd);
-    if (it != state_.inodes.end() && it->second.deletePending && it->second.openCount == 0 &&
-        coordinator_.inodeHolderCount(of.inode, true) == 0) {
+    if (it != state_.inodes.end() && it->second.deletePending && it->second.openCount == 0) {
       releaseInode(of.inode, true);
     }
     trace_.emit(0, "open.close", std::to_string(fd), "-", std::to_string(of.inode), "logout closes fd", "ok");
@@ -1272,7 +1264,7 @@ CommandResult FileSystemKernel::cmdWhoami() {
   std::ostringstream out;
   out << "user: " << activeUser_ << "\n";
   out << "cwd : " << session().cwd << "\n";
-  out << "classes: " << joinSet(effectiveClasses(activeUser_, session().cwd), ',') << "\n";
+  out << "groups: " << joinSet(effectiveClasses(activeUser_, session().cwd), ',') << "\n";
   return ok(out.str());
 }
 
@@ -1374,12 +1366,7 @@ CommandResult FileSystemKernel::cmdCreate(const std::vector<std::string>& args) 
 }
 
 CommandResult FileSystemKernel::cmdOpen(const std::vector<std::string>& args) {
-  if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("open <path> <r|w|rw|append|truncate> [lock]"));
-  std::string invalidOption;
-  const bool requestedLock = openLockRequested(args, &invalidOption);
-  if (!invalidOption.empty()) {
-    return err(ErrorCode::InvalidArgument, "unknown open option: " + invalidOption);
-  }
+  if (args.size() != 3) return err(ErrorCode::InvalidArgument, usage("open <path> <r|w|rw|append|truncate>"));
   ResolvedPath rp;
   try { rp = resolve(args[1], true); } catch (const std::exception& ex) { return err(ErrorCode::NotFound, ex.what()); }
   auto& inode = state_.inodes[rp.inode];
@@ -1388,21 +1375,9 @@ CommandResult FileSystemKernel::cmdOpen(const std::vector<std::string>& args) {
   if (!canTraverse(rp.canonical, false, &reason)) return err(ErrorCode::PermissionDenied, "access denied: " + reason);
   if (!authCheck(rp.inode, rightForFlag(args[2]), rp.canonical, &reason)) return err(ErrorCode::PermissionDenied, "access denied: " + reason);
   if (session().openFiles.size() >= config::kMaxOpenPerUser) return err(ErrorCode::Busy, "user open file table is full");
-  const int plannedFd = session().nextFd;
-  const auto lockMode = rightForFlag(args[2]) == "w" ? "write" : "read";
-  std::string lockReason;
-  if (requestedLock && !coordinator_.acquireInodeLock(rp.inode, rp.canonical, lockMode, activeUser_, plannedFd, "open " + args[2], &lockReason)) {
-    return err(ErrorCode::LockBusy, lockReason);
-  }
   if (args[2].find("truncate") != std::string::npos) {
     auto tx = beginTx("open.truncate");
     ensureMutablePath(rp.canonical, true, tx.id, &rp);
-    if (requestedLock && rp.inode != inode.id) {
-      coordinator_.releaseInodeLock(inode.id, plannedFd);
-      if (!coordinator_.acquireInodeLock(rp.inode, rp.canonical, "write", activeUser_, plannedFd, "open truncate", &lockReason)) {
-        return err(ErrorCode::LockBusy, lockReason);
-      }
-    }
     setFileData(state_.inodes[rp.inode], "", tx.id);
     commitTx(tx);
   }
@@ -1412,13 +1387,12 @@ CommandResult FileSystemKernel::cmdOpen(const std::vector<std::string>& args) {
   of.inode = rp.inode;
   of.path = rp.canonical;
   of.flags = args[2];
-  of.locked = requestedLock;
   of.offset = args[2].find("append") != std::string::npos ? state_.inodes[rp.inode].size : 0;
   session().openFiles[of.fd] = of;
   ++state_.inodes[rp.inode].openCount;
   ++systemOpen_[rp.inode];
   trace_.emit(0, "open.fd", std::to_string(of.fd), "-", std::to_string(rp.inode), "file opened", "ok");
-  return ok("fd " + std::to_string(of.fd) + " -> " + rp.canonical + (requestedLock ? " [lock]\n" : "\n"));
+  return ok("fd " + std::to_string(of.fd) + " -> " + rp.canonical + "\n");
 }
 
 CommandResult FileSystemKernel::cmdRead(const std::vector<std::string>& args) {
@@ -1465,19 +1439,9 @@ CommandResult FileSystemKernel::cmdWrite(const std::vector<std::string>& args, c
   }
   auto tx = beginTx("write");
   ResolvedPath rp;
-  const auto oldInode = it->second.inode;
-  const bool fdLocked = it->second.locked;
-  const auto fdForLock = fd;
   ensureMutablePath(it->second.path, true, tx.id, &rp);
   it = session().openFiles.find(fd);
   it->second.inode = rp.inode;
-  if (fdLocked && oldInode != rp.inode) {
-    coordinator_.releaseInodeLock(oldInode, fdForLock);
-    std::string lockReason;
-    if (!coordinator_.acquireInodeLock(rp.inode, rp.canonical, "write", activeUser_, fdForLock, "write COW", &lockReason)) {
-      return err(ErrorCode::LockBusy, lockReason);
-    }
-  }
   auto& inode = state_.inodes[rp.inode];
   auto existing = readFileData(inode);
   if (it->second.flags.find("append") != std::string::npos) it->second.offset = existing.size();
@@ -1501,10 +1465,8 @@ CommandResult FileSystemKernel::cmdClose(const std::vector<std::string>& args) {
   auto inodeIt = state_.inodes.find(inodeId);
   if (inodeIt != state_.inodes.end() && inodeIt->second.openCount > 0) --inodeIt->second.openCount;
   if (systemOpen_[inodeId] > 0) --systemOpen_[inodeId];
-  if (it->second.locked) coordinator_.releaseInodeLock(inodeId, fd);
   session().openFiles.erase(it);
-  if (inodeIt != state_.inodes.end() && inodeIt->second.deletePending && inodeIt->second.openCount == 0 &&
-      coordinator_.inodeHolderCount(inodeId, true) == 0) {
+  if (inodeIt != state_.inodes.end() && inodeIt->second.deletePending && inodeIt->second.openCount == 0) {
     releaseInode(inodeId, true);
   }
   saveState();
@@ -1526,10 +1488,9 @@ CommandResult FileSystemKernel::cmdDelete(const std::vector<std::string>& args) 
   auto& parent = state_.inodes[rp.parent];
   parent.entries.erase(rp.leaf);
   refreshDirBlock(parent, tx.id);
-  const auto holders = coordinator_.inodeHolderCount(rp.inode, true);
-  if (state_.inodes[rp.inode].openCount > 0 || holders > 0) {
+  if (state_.inodes[rp.inode].openCount > 0) {
     state_.inodes[rp.inode].deletePending = true;
-    trace_.emit(tx.id, "inode.lock.delete_pending", rp.canonical, std::to_string(rp.inode), std::to_string(holders), "open holders delay reclaim", "ok");
+    trace_.emit(tx.id, "inode.delete_pending", rp.canonical, std::to_string(rp.inode), "open", "open file delays reclaim", "ok");
   } else {
     releaseInode(rp.inode, true);
   }
@@ -1545,16 +1506,12 @@ CommandResult FileSystemKernel::cmdTruncate(const std::vector<std::string>& args
   std::string path = args[1];
   bool byFd = false;
   int fd = -1;
-  std::uint32_t oldFdInode = 0;
-  bool fdLocked = false;
   if (std::all_of(args[1].begin(), args[1].end(), ::isdigit)) {
     byFd = true;
     fd = std::stoi(args[1]);
     auto it = session().openFiles.find(fd);
     if (it == session().openFiles.end()) return err(ErrorCode::InvalidFd, "fd not open");
     path = it->second.path;
-    oldFdInode = it->second.inode;
-    fdLocked = it->second.locked;
   } else {
     ResolvedPath rp;
     try { rp = resolve(args[1], true); } catch (const std::exception& ex) { return err(ErrorCode::NotFound, ex.what()); }
@@ -1569,13 +1526,6 @@ CommandResult FileSystemKernel::cmdTruncate(const std::vector<std::string>& args
   inodeId = rp.inode;
   if (byFd) {
     session().openFiles[fd].inode = inodeId;
-    if (fdLocked && oldFdInode != inodeId) {
-      coordinator_.releaseInodeLock(oldFdInode, fd);
-      std::string lockReason;
-      if (!coordinator_.acquireInodeLock(inodeId, rp.canonical, "write", activeUser_, fd, "truncate COW", &lockReason)) {
-        return err(ErrorCode::LockBusy, lockReason);
-      }
-    }
   }
   auto data = readFileData(state_.inodes[inodeId]);
   data.resize(newSize, '\0');
@@ -1637,47 +1587,10 @@ CommandResult FileSystemKernel::cmdTrace(const std::vector<std::string>& args) {
 }
 
 CommandResult FileSystemKernel::cmdScope(const std::vector<std::string>& args) {
-  return ok(renderScope(args.size() >= 2 ? lower(args[1]) : "summary"));
-}
-
-CommandResult FileSystemKernel::cmdLock(const std::vector<std::string>& args) {
-  const auto sub = args.size() >= 2 ? lower(args[1]) : "show";
-  if (sub == "clear-stale") {
-    const auto removed = coordinator_.clearStaleLocks();
-    return ok("stale locks cleared: " + std::to_string(removed) + "\n");
-  }
-  if (sub != "show") return err(ErrorCode::InvalidArgument, usage("lock show [path]|clear-stale"));
-  std::uint32_t filterInode = 0;
-  std::string filterPath;
-  if (args.size() >= 3 && mounted_) {
-    try {
-      const auto rp = resolve(args[2], true);
-      filterInode = rp.inode;
-      filterPath = rp.canonical;
-    } catch (const std::exception& ex) {
-      return err(ErrorCode::NotFound, ex.what());
-    }
-  }
-  std::vector<std::string> lines;
-  std::ostringstream plain;
-  plain << "kind mode inode fd pid session user stale path reason\n";
-  for (const auto& lock : coordinator_.listLocks(true)) {
-    if (filterInode != 0 && lock.inode != filterInode && lock.path != filterPath) continue;
-    std::ostringstream line;
-    line << lock.kind << " " << lock.mode << " inode=" << lock.inode << " fd=" << lock.fd
-         << " pid=" << lock.pid << " session=" << lock.sessionId << " user=" << lock.user
-         << " stale=" << boolText(lock.stale) << " " << lock.path << " " << lock.reason;
-    lines.push_back(line.str());
-    plain << lock.kind << " " << lock.mode << " " << lock.inode << " " << lock.fd << " "
-          << lock.pid << " " << lock.sessionId << " " << lock.user << " "
-          << boolText(lock.stale) << " " << lock.path << " " << lock.reason << "\n";
-  }
-  if (lines.empty()) lines.push_back("no locks");
-  if (interactiveUi_) {
-    return ok(ui::box(ui::theme(ansiUi_, themeName_, langName_), "Lock holders", lines,
-                      std::min(ui::detectMetrics().columns, ui::detectMetrics().wide ? 132 : 112), "amber") + "\n");
-  }
-  return ok(plain.str());
+  const auto what = args.size() >= 2 ? lower(args[1]) : "summary";
+  static const std::set<std::string> allowed = {"summary", "inode", "block", "journal", "open", "tree"};
+  if (!allowed.count(what)) return err(ErrorCode::InvalidArgument, usage("scope [inode|block|journal|open|tree]"));
+  return ok(renderScope(what));
 }
 
 CommandResult FileSystemKernel::cmdSleep(const std::vector<std::string>& args) {
@@ -1796,7 +1709,6 @@ CommandResult FileSystemKernel::cmdSnapshot(const std::vector<std::string>& args
     if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("snapshot rollback <name>"));
     auto it = state_.snapshots.find(args[2]);
     if (it == state_.snapshots.end()) return err(ErrorCode::NotFound, "snapshot not found");
-    if (coordinator_.hasAnyWriteHolder(false)) return err(ErrorCode::LockBusy, "snapshot rollback blocked by another terminal write holder");
     auto tx = beginTx("snapshot.rollback");
     const auto oldRoot = state_.super.activeRoot;
     retainInode(it->second.rootInode);
@@ -1810,7 +1722,6 @@ CommandResult FileSystemKernel::cmdSnapshot(const std::vector<std::string>& args
     if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("snapshot delete <name>"));
     auto it = state_.snapshots.find(args[2]);
     if (it == state_.snapshots.end()) return err(ErrorCode::NotFound, "snapshot not found");
-    if (coordinator_.hasAnyWriteHolder(false)) return err(ErrorCode::LockBusy, "snapshot delete blocked by another terminal write holder");
     auto tx = beginTx("snapshot.delete");
     const auto root = it->second.rootInode;
     state_.snapshots.erase(it);
@@ -1859,7 +1770,7 @@ CommandResult FileSystemKernel::cmdClass(const std::vector<std::string>& args) {
   const auto sub = lower(args[1]);
   if (sub == "list") {
     std::ostringstream out;
-    out << "class                owner      parents              members              grant constraints\n";
+    out << "group                owner      parents              members              grant constraints\n";
     for (const auto& [name, c] : state_.classes) {
       out << std::left << std::setw(20) << name << " " << std::setw(10) << c.owner << " "
           << std::setw(20) << joinSet(c.parents, ',') << " " << std::setw(20)
@@ -1893,9 +1804,9 @@ CommandResult FileSystemKernel::cmdClass(const std::vector<std::string>& args) {
     c.grantOption = true;
     state_.classes[c.name] = c;
     state_.users[activeUser_].classes.insert(c.name);
-    trace_.emit(tx.id, "class.create", c.name, "-", activeUser_, "create identity class", "ok");
+    trace_.emit(tx.id, "class.create", c.name, "-", activeUser_, "create user group", "ok");
     commitTx(tx);
-    return ok("class created " + c.name + "\n");
+    return ok("group created " + c.name + "\n");
   }
   if (sub == "grant") {
     if (args.size() < 5 || lower(args[3]) != "to") return err(ErrorCode::InvalidArgument, usage("class grant <class> to <user_or_class> [with grant option] [constraints]"));
@@ -1931,7 +1842,7 @@ CommandResult FileSystemKernel::cmdClass(const std::vector<std::string>& args) {
     if (grantOption) state_.classes[cls].grantOption = true;
     if (!constraints.empty()) state_.classes[cls].constraints = constraints;
     ++state_.classes[cls].generation;
-    trace_.emit(tx.id, "class.grant", cls, "-", target, "grant identity class", "ok");
+    trace_.emit(tx.id, "class.grant", cls, "-", target, "grant user group", "ok");
     commitTx(tx);
     return ok("granted " + cls + " to " + target + "\n");
   }
@@ -2048,7 +1959,7 @@ CommandResult FileSystemKernel::cmdChown(const std::vector<std::string>& args) {
 
 CommandResult FileSystemKernel::cmdChclass(const std::vector<std::string>& args) {
   if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("chclass <path> <class>"));
-  if (!state_.classes.count(args[2])) return err(ErrorCode::NotFound, "class not found");
+  if (!state_.classes.count(args[2])) return err(ErrorCode::NotFound, "group not found");
   ResolvedPath rp;
   try { rp = resolve(args[1], true); } catch (const std::exception& ex) { return err(ErrorCode::NotFound, ex.what()); }
   std::string reason;
@@ -2058,7 +1969,7 @@ CommandResult FileSystemKernel::cmdChclass(const std::vector<std::string>& args)
   ensureMutablePath(rp.canonical, true, tx.id, &rp);
   const auto before = state_.inodes[rp.inode].klass;
   state_.inodes[rp.inode].klass = args[2];
-  trace_.emit(tx.id, "inode.chclass", rp.canonical, before, args[2], "file class changed", "ok");
+  trace_.emit(tx.id, "inode.chclass", rp.canonical, before, args[2], "file group changed", "ok");
   commitTx(tx);
   return ok("class updated\n");
 }
@@ -2124,21 +2035,21 @@ CommandResult FileSystemKernel::cmdHelp() {
   if (langName_ == "zh") {
     out << "ScopeFS 命令\n"
         << "  format | login <用户> [密码] | logout | whoami | exit\n"
-        << "  mkdir/rmdir/chdir/dir/create/open [lock]/read/write/close/delete/rm/truncate\n"
+        << "  mkdir/rmdir/chdir/dir/create/open/read/write/close/delete/rm/truncate\n"
         << "  trace on/off/show [数量]/save <文件>/replay <文件>/step/clear\n"
-        << "  scope [inode|block|journal|open|locks|tree] | map [blocks|inode|journal|refcount|owner]\n"
+        << "  scope [inode|block|journal|open|tree] | map [blocks|inode|journal|refcount|owner]\n"
         << "  snapshot create/list/show/diff/rollback/delete | clone <源> <目标>\n"
         << "  class create/grant/revoke/list/tree | chmod/chown/chclass | acl show/grant/revoke\n"
-        << "  crash now/after/before/at/clear | lock show [路径]/clear-stale | sleep <毫秒> | fsck [--repair] | theme scope-dark|blue|mono | lang zh|en\n";
+        << "  crash now/after/before/at/clear | sleep <毫秒> | fsck [--repair] | theme scope-dark|blue|mono | lang zh|en\n";
   } else {
     out << "ScopeFS commands\n"
         << "  format | login <user> [password] | logout | whoami | exit\n"
-        << "  mkdir/rmdir/chdir/dir/create/open [lock]/read/write/close/delete/rm/truncate\n"
+        << "  mkdir/rmdir/chdir/dir/create/open/read/write/close/delete/rm/truncate\n"
         << "  trace on/off/show [n]/save <file>/replay <file>/step/clear\n"
-        << "  scope [inode|block|journal|open|locks|tree] | map [blocks|inode|journal|refcount|owner]\n"
+        << "  scope [inode|block|journal|open|tree] | map [blocks|inode|journal|refcount|owner]\n"
         << "  snapshot create/list/show/diff/rollback/delete | clone <src> <dst>\n"
         << "  class create/grant/revoke/list/tree | chmod/chown/chclass | acl show/grant/revoke\n"
-        << "  crash now/after/before/at/clear | lock show [path]/clear-stale | sleep <ms> | fsck [--repair] | theme scope-dark|blue|mono | lang zh|en\n";
+        << "  crash now/after/before/at/clear | sleep <ms> | fsck [--repair] | theme scope-dark|blue|mono | lang zh|en\n";
   }
   return ok(out.str());
 }
@@ -2169,7 +2080,7 @@ std::string FileSystemKernel::renderDir(std::uint32_t inodeId, const std::string
   }
   std::ostringstream out;
   out << "╭────────────────────────────────────────────────────────────────────────────────────────╮\n";
-  out << "│ name                 type    size    owner      class      mode        inode blocks     │\n";
+  out << "│ name                 type    size    owner      group      mode        inode blocks     │\n";
   out << "├────────────────────────────────────────────────────────────────────────────────────────┤\n";
   for (const auto& [name, de] : dir.entries) {
     const auto it = state_.inodes.find(de.inode);
@@ -2194,7 +2105,7 @@ std::string FileSystemKernel::renderScope(const std::string& what) const {
   const auto metrics = ui::detectMetrics();
   if (what == "tree") {
     std::set<std::uint32_t> seen;
-    const auto tree = renderTree(state_.super.activeRoot, "", "/", seen);
+    const auto tree = renderTree(state_.super.activeRoot, "", "/", true, seen);
     if (interactiveUi_) {
       std::vector<std::string> lines;
       std::istringstream in(tree);
@@ -2229,7 +2140,7 @@ std::string FileSystemKernel::renderScope(const std::string& what) const {
       if (inodeRows.size() > 10) inodeRows.resize(10);
       return ui::renderScope(th, metrics, status(), inodeRows, {{"view", "inode table"}, {"mode", "hot first"}});
     }
-    out << "inode type    gen ref open owner      class      size blocks pending\n";
+    out << "inode type    gen ref open owner      group      size blocks pending\n";
     for (const auto& [id, n] : state_.inodes) {
       out << std::setw(5) << id << " " << std::left << std::setw(7) << nodeMarker(n.type)
           << std::right << std::setw(4) << n.generation << std::setw(4) << n.refcount
@@ -2258,57 +2169,23 @@ std::string FileSystemKernel::renderScope(const std::string& what) const {
       for (const auto& [user, sess] : sessions_) {
         for (const auto& [fd, of] : sess.openFiles) {
           body.push_back(user + " fd=" + std::to_string(fd) + " inode=#" + std::to_string(of.inode) +
-                         " offset=" + std::to_string(of.offset) + " " + of.flags +
-                         (of.locked ? " lock " : " nolock ") + of.path);
+                         " offset=" + std::to_string(of.offset) + " " + of.flags + " " + of.path);
         }
-      }
-      for (const auto& lock : coordinator_.listLocks(false)) {
-        if (lock.kind != "inode") continue;
-        body.push_back("holder pid=" + std::to_string(lock.pid) + " session=" + clip(lock.sessionId, 18) +
-                       " fd=" + std::to_string(lock.fd) + " inode=#" + std::to_string(lock.inode) +
-                       " " + lock.mode + " " + lock.path);
       }
       if (body.empty()) body.push_back("no open file descriptors");
       return ui::box(th, "Open file tables", body, std::min(metrics.columns, metrics.wide ? 132 : 112), "blue") + "\n";
     }
-    out << "user fd inode offset flags lock path\n";
+    out << "user fd inode offset flags path\n";
     for (const auto& [user, sess] : sessions_) {
       for (const auto& [fd, of] : sess.openFiles) {
-        out << user << " " << fd << " " << of.inode << " " << of.offset << " " << of.flags << " "
-            << (of.locked ? "yes" : "no") << " " << of.path << "\n";
+        out << user << " " << fd << " " << of.inode << " " << of.offset << " " << of.flags << " " << of.path << "\n";
       }
     }
     out << "system open table\n";
     for (const auto& [inode, count] : systemOpen_) {
       if (count > 0) out << "inode " << inode << " refs " << count << "\n";
     }
-    out << "cross-terminal holders\n";
-    for (const auto& lock : coordinator_.listLocks(false)) {
-      if (lock.kind == "inode") {
-        out << "inode " << lock.inode << " fd " << lock.fd << " " << lock.mode
-            << " pid " << lock.pid << " session " << lock.sessionId << " " << lock.path << "\n";
-      }
-    }
     return out.str();
-  }
-  if (what == "locks") {
-    std::vector<std::string> body;
-    std::ostringstream plain;
-    plain << "kind mode inode fd pid session user stale path reason\n";
-    for (const auto& lock : coordinator_.listLocks(true)) {
-      std::ostringstream line;
-      line << lock.kind << " " << lock.mode << " inode=" << lock.inode << " fd=" << lock.fd
-           << " pid=" << lock.pid << " session=" << clip(lock.sessionId, 18)
-           << " user=" << lock.user << " stale=" << boolText(lock.stale)
-           << " " << lock.path << " " << lock.reason;
-      body.push_back(line.str());
-      plain << lock.kind << " " << lock.mode << " " << lock.inode << " " << lock.fd << " "
-            << lock.pid << " " << lock.sessionId << " " << lock.user << " "
-            << boolText(lock.stale) << " " << lock.path << " " << lock.reason << "\n";
-    }
-    if (body.empty()) body.push_back("no cross-terminal locks");
-    if (interactiveUi_) return ui::box(th, "Lock holders", body, std::min(metrics.columns, metrics.wide ? 132 : 112), "amber") + "\n";
-    return plain.str();
   }
   if (interactiveUi_) {
     std::vector<ui::InodeRow> hot;
@@ -2346,17 +2223,24 @@ std::string FileSystemKernel::renderScope(const std::string& what) const {
   return out.str();
 }
 
-std::string FileSystemKernel::renderTree(std::uint32_t inode, const std::string& prefix, const std::string& name, std::set<std::uint32_t>& seen) const {
+std::string FileSystemKernel::renderTree(std::uint32_t inode, const std::string& prefix, const std::string& name, bool last, std::set<std::uint32_t>& seen) const {
   std::ostringstream out;
   auto it = state_.inodes.find(inode);
   if (it == state_.inodes.end()) return "";
-  out << prefix << name << " [" << it->second.id << ":" << nodeMarker(it->second.type)
+  const bool root = prefix.empty() && name == "/";
+  out << prefix;
+  if (!root) out << (last ? "└─ " : "├─ ");
+  out << name << " [" << it->second.id << ":" << nodeMarker(it->second.type)
       << " ref=" << it->second.refcount << "]\n";
   if (it->second.type != NodeType::Directory || seen.count(inode)) return out.str();
   seen.insert(inode);
+  std::vector<std::pair<std::string, DirEntry>> children;
   for (const auto& [entryName, de] : it->second.entries) {
-    if (entryName == "." || entryName == "..") continue;
-    out << renderTree(de.inode, prefix + "  ", entryName, seen);
+    if (entryName != "." && entryName != "..") children.push_back({entryName, de});
+  }
+  const auto childPrefix = root ? "" : prefix + (last ? "   " : "│  ");
+  for (std::size_t i = 0; i < children.size(); ++i) {
+    out << renderTree(children[i].second.inode, childPrefix, children[i].first, i + 1 == children.size(), seen);
   }
   return out.str();
 }

@@ -58,7 +58,7 @@ std::string zh(const std::string& key) {
       {"trace_replay", "跟踪回放 / 只读"},
       {"trace_step", "跟踪单步"},
       {"snapshot_diff", "快照 diff"},
-      {"class_graph", "身份类图"},
+      {"class_graph", "用户组图"},
       {"acl_graph", "ACL 图"},
       {"read_result", "读取结果"},
       {"offset", "偏移"},
@@ -105,7 +105,7 @@ std::string en(const std::string& key) {
       {"trace_replay", "Trace replay / read-only"},
       {"trace_step", "Trace step"},
       {"snapshot_diff", "Snapshot diff"},
-      {"class_graph", "Class graph"},
+      {"class_graph", "Group graph"},
       {"acl_graph", "ACL graph"},
       {"read_result", "Read result"},
       {"offset", "offset"},
@@ -176,6 +176,7 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"coord.epoch.reload", "重载卷状态"},
       {"coord.signal.crash", "广播崩溃信号"},
       {"coord.signal.receive", "收到崩溃信号"},
+      {"system.crash.detected", "检测到终端崩溃"},
       {"block.read", "读取块层"},
       {"block.write", "写入块层"},
       {"block.alloc", "分配数据块"},
@@ -211,9 +212,10 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"inode.lock.release", "释放索引节点锁"},
       {"inode.lock.conflict", "索引节点锁冲突"},
       {"inode.lock.delete_pending", "标记延迟删除"},
+      {"inode.delete_pending", "标记延迟删除"},
       {"inode.chmod", "修改模式"},
       {"inode.chown", "修改属主"},
-      {"inode.chclass", "修改所属类"},
+      {"inode.chclass", "修改所属用户组"},
       {"cow.break", "写时拷贝断开"},
       {"cow.path_root", "复制共享根"},
       {"cow.path_node", "复制共享路径"},
@@ -231,9 +233,9 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"snapshot.create", "创建快照"},
       {"snapshot.rollback", "回滚快照"},
       {"snapshot.delete", "删除快照"},
-      {"class.create", "创建身份类"},
-      {"class.grant", "授予身份类"},
-      {"class.revoke", "收回身份类"},
+      {"class.create", "创建用户组"},
+      {"class.grant", "授予用户组"},
+      {"class.revoke", "收回用户组"},
       {"acl.grant", "授予 ACL"},
       {"acl.revoke", "收回 ACL"},
       {"trace.on", "开启跟踪"},
@@ -252,6 +254,7 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"coord.epoch.reload", "reload volume state"},
       {"coord.signal.crash", "broadcast crash signal"},
       {"coord.signal.receive", "receive crash signal"},
+      {"system.crash.detected", "detect terminal crash"},
       {"block.read", "read block layer"},
       {"block.write", "write block layer"},
       {"block.alloc", "allocate data block"},
@@ -287,9 +290,10 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"inode.lock.release", "release index-node lock"},
       {"inode.lock.conflict", "index-node lock conflict"},
       {"inode.lock.delete_pending", "mark delete pending"},
+      {"inode.delete_pending", "mark delete pending"},
       {"inode.chmod", "change mode"},
       {"inode.chown", "change owner"},
-      {"inode.chclass", "change class"},
+      {"inode.chclass", "change group"},
       {"cow.break", "break COW sharing"},
       {"cow.path_root", "copy shared root"},
       {"cow.path_node", "copy shared path"},
@@ -307,9 +311,9 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"snapshot.create", "create snapshot"},
       {"snapshot.rollback", "rollback snapshot"},
       {"snapshot.delete", "delete snapshot"},
-      {"class.create", "create identity class"},
-      {"class.grant", "grant identity class"},
-      {"class.revoke", "revoke identity class"},
+      {"class.create", "create user group"},
+      {"class.grant", "grant user group"},
+      {"class.revoke", "revoke user group"},
       {"acl.grant", "grant ACL"},
       {"acl.revoke", "revoke ACL"},
       {"trace.on", "trace on"},
@@ -374,7 +378,7 @@ std::string mapWhatLabel(const Theme& th, const std::string& what) {
 std::string extraLabel(const Theme& th, const std::string& key) {
   if (key == "cwd") return th.lang == "zh" ? "当前目录" : "current directory";
   if (key == "trace") return th.lang == "zh" ? "跟踪" : "trace";
-  if (key == "classes") return th.lang == "zh" ? "身份类" : "classes";
+  if (key == "classes") return th.lang == "zh" ? "用户组" : "groups";
   if (key == "view") return th.lang == "zh" ? "视图" : "view";
   if (key == "mode") return th.lang == "zh" ? "模式" : "mode";
   return key;
@@ -772,7 +776,7 @@ std::string renderDashboard(const Theme& th, const TerminalMetrics& metrics, con
   const int panelLeft = std::max(0, (metrics.columns - panelWidth) / 2);
   std::vector<std::string> command = {
       rawFg(th.amber, "/scope") + rawFg(th.gray, "  " + text(th, "command_surface")) + th.reset,
-      rawFg(th.white, "› ") + rawFg(th.gray, "format  ·  login root root  ·  scope tree  ·  map refcount") + th.reset,
+      rawFg(th.white, "$ ") + rawFg(th.gray, "format  ·  login root root  ·  scope tree  ·  map refcount") + th.reset,
       rawFg(th.blue, "Build") + rawFg(th.white, "  " + text(th, "observable_kernel") + " ") +
           rawFg(th.dim, text(th, "terminal_first")) + th.reset};
   out << indentBlock(box(th, text(th, "command_focus"), command, panelWidth, "amber"), panelLeft) << "\n\n";
@@ -804,12 +808,11 @@ PromptRender renderPromptLine(const Theme& th, const TerminalMetrics& metrics, c
   PromptRender rendered;
   const int width = std::min(metrics.columns, metrics.compact ? metrics.columns : 112);
   const int left = std::max(0, (metrics.columns - width) / 2);
-  const int cwdSlot = metrics.compact ? 18 : (metrics.wide ? 34 : 24);
-  const int userSlot = metrics.compact ? 10 : 14;
-
-  const auto cwd = truncate(status.cwd, cwdSlot);
-  const auto user = truncate(status.user, userSlot);
-  const std::string plainPrefix = cwd + " " + user + " > ";
+  const bool loggedIn = !status.user.empty() && status.user != "-";
+  const std::string plainPrefix = loggedIn
+      ? truncate(status.cwd, metrics.compact ? 18 : (metrics.wide ? 34 : 24)) + " " +
+            truncate(status.user, metrics.compact ? 10 : 14) + " $ "
+      : "$ ";
   const int prefixWidth = displayWidth(plainPrefix);
   const int available = std::max(4, width - prefixWidth);
 
@@ -829,10 +832,16 @@ PromptRender renderPromptLine(const Theme& th, const TerminalMetrics& metrics, c
     return rendered;
   }
 
-  const auto prefix = th.panel2 +
-                      panelAccent(th, th.amber, cwd) + " " +
-                      panelAccent(th, th.blue, user) +
-                      th.white + th.bold + " > " + th.normalWeight;
+  std::string prefix = th.panel2;
+  if (loggedIn) {
+    const int cwdSlot = metrics.compact ? 18 : (metrics.wide ? 34 : 24);
+    const int userSlot = metrics.compact ? 10 : 14;
+    prefix += panelAccent(th, th.amber, truncate(status.cwd, cwdSlot)) + " " +
+              panelAccent(th, th.blue, truncate(status.user, userSlot)) +
+              th.white + th.bold + " $ " + th.normalWeight;
+  } else {
+    prefix += th.white + th.bold + "$ " + th.normalWeight;
+  }
   rendered.row = std::string(left, ' ') + prefix + th.white + visible +
                  std::string(std::max(0, available - commandWidth), ' ') + th.reset;
   return rendered;
@@ -872,9 +881,12 @@ std::string renderResult(const Theme& th, const TerminalMetrics& metrics, const 
 
 std::string renderDir(const Theme& th, const TerminalMetrics& metrics, const std::string& path, const std::vector<DirRow>& rows) {
   const int width = std::min(metrics.columns, metrics.wide ? 132 : 112);
-  const int nameWidth = metrics.compact ? 16 : (metrics.wide ? 32 : 24);
-  const int typeWidth = 6;
-  const std::string detailIndent(metrics.compact ? 3 : nameWidth + 3, ' ');
+  const int nameWidth = metrics.compact ? 10 : (metrics.wide ? 16 : 12);
+  const int typeWidth = 7;
+  const int ownerWidth = metrics.compact ? 14 : 18;
+  const int sizeWidth = 6;
+  const int blockWidth = metrics.compact ? 8 : 12;
+  const std::string detailIndent(3, ' ');
   std::vector<std::string> list;
   list.push_back(accent(th, th.amber, truncate(path, width - 16)) + "  " + badge(th, std::to_string(rows.size()) + " " + text(th, "entries"), "blue"));
   for (const auto& row : rows) {
@@ -882,14 +894,15 @@ std::string renderDir(const Theme& th, const TerminalMetrics& metrics, const std
     const auto nameTone = row.type == "dir" ? th.amber : (row.shared ? th.magenta : th.white);
     const auto nameCell = accent(th, nameTone, padRight(row.name, nameWidth));
     const auto typeCell = color(th, th.white, padRight(row.type, typeWidth));
-    const auto meta = color(th, th.dim, text(th, "inode") + " ") + accent(th, th.amber, std::to_string(row.inode)) +
-                      color(th, th.dim, " " + text(th, "gen") + " ") + color(th, th.white, std::to_string(row.generation)) +
-                      color(th, th.dim, " " + text(th, "ref") + " ") + color(th, row.shared ? th.magenta : th.white, std::to_string(row.refcount));
+    const auto meta = color(th, th.dim, text(th, "inode") + " ") + accent(th, th.amber, padLeft(std::to_string(row.inode), 4)) +
+                      color(th, th.dim, "   " + text(th, "gen") + " ") + color(th, th.white, padLeft(std::to_string(row.generation), 3)) +
+                      color(th, th.dim, "   " + text(th, "ref") + " ") + color(th, row.shared ? th.magenta : th.white, padLeft(std::to_string(row.refcount), 2));
     const auto ownerClass = row.owner + ":" + row.klass;
-    const auto blocks = progress(th, row.blockCount, 12, metrics.compact ? 8 : 12, row.shared ? "magenta" : "blue");
-    list.push_back(color(th, toneCode(th, tone), iconForType(row.type)) + " " + nameCell + " " + typeCell + " " + meta);
-    list.push_back(detailIndent + color(th, th.white, row.mode) + "  " + color(th, th.white, ownerClass) +
-                   "  " + color(th, th.dim, text(th, "size") + " ") + accent(th, th.white, std::to_string(row.size)) +
+    const auto blocks = progress(th, row.blockCount, 12, blockWidth, row.shared ? "magenta" : "blue");
+    list.push_back(color(th, toneCode(th, tone), iconForType(row.type)) + " " + nameCell + "  " + typeCell + "  " + meta);
+    list.push_back(detailIndent + color(th, th.white, padRight(row.mode, 10)) + "  " +
+                   color(th, th.white, padRight(ownerClass, ownerWidth)) + "  " +
+                   color(th, th.dim, text(th, "size") + " ") + accent(th, th.white, padLeft(std::to_string(row.size), sizeWidth)) +
                    "  " + color(th, th.dim, text(th, "blocks") + " ") + blocks);
   }
   return box(th, text(th, "directory"), list, width, "amber") + "\n";
@@ -986,9 +999,12 @@ std::string renderMap(const Theme& th, const TerminalMetrics& metrics, const std
 std::string renderTraceTimeline(const Theme& th, const TerminalMetrics& metrics, const std::vector<TraceEvent>& events, const std::string& title) {
   const int width = std::min(metrics.columns, metrics.wide ? 132 : 112);
   std::vector<std::string> lines;
-  for (const auto& e : events) {
+  for (std::size_t i = 0; i < events.size(); ++i) {
+    const auto& e = events[i];
     const auto tone = eventTone(e);
-    std::string branch = e.type.find("path.lookup") != std::string::npos ? "  └─" : "●";
+    const bool isPath = e.type.find("path.lookup") != std::string::npos;
+    const bool nextIsPath = i + 1 < events.size() && events[i + 1].type.find("path.lookup") != std::string::npos;
+    std::string branch = isPath ? (nextIsPath ? "  ├─" : "  └─") : "●";
     if (e.type.find("journal") != std::string::npos) branch = "◆";
     if (e.status == "deny" || e.status == "crash") branch = "×";
     std::ostringstream line;

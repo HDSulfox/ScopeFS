@@ -58,18 +58,8 @@ function Finish-Scope($proc, [int[]]$AllowedExit = @(0)) {
   return $stdout + $stderr
 }
 
-function Wait-ForPattern([string]$Pattern, [int]$TimeoutMs = 3000) {
-  $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
-  do {
-    $out = Run-ScopeText "lock show`nexit`n"
-    if ($out -match $Pattern) { return $out }
-    Start-Sleep -Milliseconds 100
-  } while ([DateTime]::UtcNow -lt $deadline)
-  throw "timed out waiting for lock pattern: $Pattern"
-}
-
 Write-Host "== concurrent different-file tx serialization =="
-Run-ScopeText @"
+$deleted = Run-ScopeText @"
 format
 login root root
 exit
@@ -121,34 +111,7 @@ if (!(Test-Path $tracePath) -or (Get-Content $tracePath -Raw) -notmatch '"type":
   throw "shared read lock trace event was not recorded"
 }
 
-Write-Host "== concurrent same-file write lock conflict =="
-Run-ScopeText @"
-format
-login root root
-create /root/locked 0644
-exit
-"@ | Out-Null
-$holder = Start-Scope
-Send-Scope $holder @"
-login root root
-open /root/locked rw lock
-sleep 2500
-close 3
-exit
-"@
-Wait-ForPattern "/root/locked" | Out-Null
-$busy = Run-ScopeText @"
-login root root
-open /root/locked rw lock
-exit
-"@
-if ($busy -notmatch "E_LOCK_BUSY") {
-  Write-Host $busy
-  throw "second writer did not observe E_LOCK_BUSY"
-}
-Finish-Scope $holder | Out-Null
-
-Write-Host "== same-file write without explicit lock is allowed =="
+Write-Host "== same-file open has no explicit file lock conflict =="
 Run-ScopeText @"
 format
 login root root
@@ -176,7 +139,7 @@ if ($unlocked -match "E_LOCK_BUSY" -or $unlocked -notmatch "fd 3 -> /root/free")
 }
 Finish-Scope $unlockedHolder | Out-Null
 
-Write-Host "== open delete delayed reclaim across terminals =="
+Write-Host "== open delete delayed reclaim without file locks =="
 Run-ScopeText @"
 format
 login root root
@@ -184,39 +147,23 @@ create /root/delay 0644
 open /root/delay rw
 write 3 still-readable
 close 3
-exit
-"@ | Out-Null
-$reader = Start-Scope
-Send-Scope $reader @"
-login root root
-open /root/delay r lock
-sleep 2500
-read 3 64
-close 3
-exit
-"@
-Wait-ForPattern "/root/delay" | Out-Null
-$deleted = Run-ScopeText @"
-login root root
+open /root/delay r
 delete /root/delay
 dir /root
-exit
-"@
-if ($deleted -match " delay ") {
-  Write-Host $deleted
-  throw "deleted directory entry stayed visible"
-}
-$readerOut = Finish-Scope $reader
-if ($readerOut -notmatch "still-readable") {
-  Write-Host $readerOut
-  throw "open reader lost delayed inode data"
-}
-$clean = Run-ScopeText @"
-login root root
+read 4 64
+close 4
 fsck
 exit
 "@
-if ($clean -notmatch "fsck: clean") { throw "fsck failed after delayed reclaim" }
+if ($deleted -match "\sdelay\s") {
+  Write-Host $deleted
+  throw "deleted directory entry stayed visible"
+}
+if ($deleted -notmatch "still-readable") {
+  Write-Host $deleted
+  throw "open reader lost delayed inode data"
+}
+if ($deleted -notmatch "fsck: clean") { throw "fsck failed after delayed reclaim" }
 
 Write-Host "== snapshot COW across terminals =="
 Run-ScopeText @"
@@ -273,23 +220,14 @@ if ($crasher -notmatch "E_CRASH" -or $victimOut -notmatch "E_CRASH") {
 $recovered = Run-ScopeText @"
 login root root
 fsck
+trace show 80
 exit
 "@
 if ($recovered -notmatch "fsck: clean") { throw "recovery after broadcast crash failed" }
-
-Write-Host "== stale lock cleanup =="
-New-Item -ItemType Directory -Force -Path ".scopefs\inode_locks" | Out-Null
-$fakeLock = ".scopefs\inode_locks\inode_12_fake_3.lock"
-Set-Content -Encoding ASCII -Path $fakeLock -Value "INODE|fake|99999999|root|12|3|write|2f726f6f742f66616b65|stale"
-$stale = Run-ScopeText @"
-lock clear-stale
-lock show
-exit
-"@
-if ((Test-Path $fakeLock) -or $stale -match "fake") {
-  Write-Host $stale
-  throw "stale lock was not cleared"
+if ($recovered -match "coord\.signal\." -or $recovered -match "crash\.point" -or $recovered -match "crash\.inject") {
+  Write-Host $recovered
+  throw "demo crash injection events leaked into trace"
 }
 
 Remove-Item Env:\SCOPEFS_LOCK_TIMEOUT_MS -ErrorAction SilentlyContinue
-Write-Host "Concurrent lock QA passed."
+Write-Host "Concurrent coordination QA passed."

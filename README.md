@@ -1,6 +1,6 @@
 # ScopeFS
 
-ScopeFS is a C++17, UNIX-like teaching file system that runs entirely from the terminal. It models multi-user sessions, directories, files, inode/block state, tracepoints, transaction journal recovery, crash injection, Copy-on-Write snapshots, block heatmaps, fsck, and a database-like identity class permission system.
+ScopeFS is a C++17, UNIX-like teaching file system that runs entirely from the terminal. It models multi-user sessions, directories, files, inode/block state, tracepoints, transaction journal recovery, crash injection, Copy-on-Write snapshots, block heatmaps, fsck, and a database-like identity group permission system.
 
 The project is intentionally terminal-first. Interactive mode renders a Unicode/ANSI workspace, while `--script` mode is deterministic and suitable for automated course checks.
 

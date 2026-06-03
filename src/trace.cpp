@@ -79,6 +79,7 @@ void TraceSink::emit(std::uint64_t txid,
                      const std::string& after,
                      const std::string& reason,
                      const std::string& status) {
+  if (type.rfind("crash.", 0) == 0 || type.rfind("coord.signal.", 0) == 0) return;
   if (!enabled_ && type.rfind("trace.", 0) != 0) return;
   TraceEvent event;
   event.seq = seq_++;

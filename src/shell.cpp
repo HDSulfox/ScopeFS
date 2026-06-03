@@ -390,16 +390,15 @@ std::vector<std::string> Shell::completionCandidates(const std::string& line, st
       "login", "logout", "whoami", "format", "mkdir", "rmdir", "chdir", "cd", "dir", "ls",
       "create", "open", "read", "write", "close", "delete", "rm", "truncate", "trace", "scope",
       "map", "snapshot", "clone", "class", "chmod", "chown", "chclass", "acl", "fsck", "crash",
-      "lock", "sleep", "theme", "lang", "help", "exit"};
+      "sleep", "theme", "lang", "help", "exit"};
   static const std::map<std::string, std::vector<std::string>> subcommands = {
       {"map", {"blocks", "inode", "journal", "refcount", "owner"}},
-      {"scope", {"inode", "block", "journal", "open", "locks", "tree"}},
+      {"scope", {"inode", "block", "journal", "open", "tree"}},
       {"trace", {"on", "off", "show", "save", "replay", "step", "clear"}},
       {"snapshot", {"create", "list", "show", "diff", "rollback", "delete"}},
       {"class", {"create", "grant", "revoke", "list", "tree"}},
       {"acl", {"show", "grant", "revoke"}},
       {"crash", {"now", "after", "before", "at", "clear"}},
-      {"lock", {"show", "clear-stale"}},
       {"theme", {"scope-dark", "blue", "mono"}},
       {"lang", {"zh", "en"}},
       {"open", {"r", "w", "rw", "append", "truncate"}},
@@ -424,10 +423,6 @@ std::vector<std::string> Shell::completionCandidates(const std::string& line, st
   }
   if (cmd == "open" && tokenIndex == 2) {
     addMatches({"r", "w", "rw", "append", "truncate"});
-    return matches;
-  }
-  if (cmd == "open" && tokenIndex >= 3) {
-    addMatches({"lock", "nolock"});
     return matches;
   }
   const auto subIt = subcommands.find(cmd);

@@ -39,12 +39,12 @@ The authorization chain is:
 1. root/admin bypass
 2. traversal execute checks on every directory component
 3. owner mode bits
-4. file class mode bits through effective identity classes
+4. file group mode bits through effective identity groups
 5. other mode bits
 6. ACL entries and constraints
 7. default deny
 
-Identity classes form a parent graph. Granting a class to another class means the target inherits the granted class. Revocation increments class generation and removes the direct grant; ACL and class trace events expose the change.
+Identity groups form a parent graph. Granting a group to another group means the target inherits the granted group. Revocation increments group generation and removes the direct grant; ACL and class-command trace events expose the change.
 
 ## Terminal Rendering
 

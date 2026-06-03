@@ -58,18 +58,6 @@ class VolumeCoordinator {
   ScopedLock acquireReadLock(const std::string& reason);
   bool hasTxLock() const;
 
-  bool acquireInodeLock(std::uint32_t inode,
-                        const std::string& path,
-                        const std::string& mode,
-                        const std::string& user,
-                        int fd,
-                        const std::string& reason,
-                        std::string* error);
-  void releaseInodeLock(std::uint32_t inode, int fd);
-  void releaseAllInodeLocks();
-  std::size_t inodeHolderCount(std::uint32_t inode, bool includeSelf) const;
-  bool hasAnyWriteHolder(bool includeSelf) const;
-
   std::vector<LockRecord> listLocks(bool includeStale) const;
   std::size_t clearStaleLocks();
 
@@ -92,7 +80,6 @@ class VolumeCoordinator {
 
   std::filesystem::path workspace() const;
   std::filesystem::path sessionsDir() const;
-  std::filesystem::path inodeLocksDir() const;
   std::filesystem::path readLocksDir() const;
   std::filesystem::path mutexDir() const;
   std::filesystem::path txDir() const;
@@ -106,7 +93,6 @@ class VolumeCoordinator {
   bool isRecordStale(const LockRecord& record) const;
   LockRecord readRecord(const std::filesystem::path& path) const;
   void writeRecord(const std::filesystem::path& path, const LockRecord& record) const;
-  std::vector<std::filesystem::path> inodeLockFiles() const;
   std::vector<std::filesystem::path> readLockFiles() const;
   void cleanupStaleLocksUnlocked(std::size_t* removed) const;
   void releasePath(const std::filesystem::path& path, const std::string& kind);
