@@ -39,7 +39,6 @@ void BlockDevice::appendJournal(const std::string& line) {
   ensureWorkspace();
   std::ofstream out(journalPath_, std::ios::binary | std::ios::app);
   out << line << '\n';
-  trace_.emit(0, "journal.record.write", "journal", "-", line.substr(0, 80), "append journal line", "ok");
 }
 
 std::vector<std::string> BlockDevice::readJournal() const {
