@@ -22,6 +22,10 @@ $traceZh = "$([char]0x8DDF)$([char]0x8E2A)"
 $projectBriefZh = "$([char]0x9879)$([char]0x76EE)$([char]0x8BF4)$([char]0x660E)"
 $courseDesignZh = "$([char]0x4E1C)$([char]0x5317)$([char]0x5927)$([char]0x5B66)$([char]0x64CD)$([char]0x4F5C)$([char]0x7CFB)$([char]0x7EDF)$([char]0x8BFE)$([char]0x7A0B)$([char]0x8BBE)$([char]0x8BA1)"
 
+function Assert-True([bool]$Condition, [string]$Message) {
+  if (!$Condition) { throw $Message }
+}
+
 function Remove-Ansi([string]$Text) {
   $esc = [char]27
   return [regex]::Replace($Text, "$esc\[[0-9;?]*[ -/]*[@-~]", "")
@@ -105,6 +109,46 @@ foreach ($width in @(88, 120, 160)) {
   }
   Assert-ProjectBoxAligned $stdout $width
 }
+
+Write-Host "== trace command timeline labels =="
+$env:SCOPEFS_WIDTH = "120"
+$traceCommands = @"
+format
+login root root
+trace create 1.txt
+exit
+"@
+$psi = [System.Diagnostics.ProcessStartInfo]::new()
+$psi.FileName = (Resolve-Path $exe).Path
+$psi.UseShellExecute = $false
+$psi.RedirectStandardInput = $true
+$psi.RedirectStandardOutput = $true
+$psi.RedirectStandardError = $true
+$proc = [System.Diagnostics.Process]::Start($psi)
+$proc.StandardInput.Write($traceCommands)
+$proc.StandardInput.Close()
+$traceStdout = $proc.StandardOutput.ReadToEnd()
+$traceStderr = $proc.StandardError.ReadToEnd()
+$proc.WaitForExit()
+if ($proc.ExitCode -ne 0) {
+  Write-Host $traceStdout
+  Write-Host $traceStderr
+  throw "interactive trace command run failed with exit code $($proc.ExitCode)"
+}
+$tracePlain = Remove-Ansi $traceStdout
+Assert-True ($tracePlain -notmatch "跟踪时间线 / create 1\.txt") "trace command title still included command suffix in zh"
+Assert-True ($tracePlain -notmatch "Trace timeline / create 1\.txt") "trace command title still included command suffix in en"
+Assert-True ($tracePlain -match "命令 create 1\.txt|command create 1\.txt") "trace command header line was missing"
+$traceLines = @($tracePlain -split "\r?\n")
+$firstTraceEvent = ""
+foreach ($line in $traceLines) {
+  if ($line -match "#\d+") {
+    $firstTraceEvent = $line
+    break
+  }
+}
+Assert-True (![string]::IsNullOrWhiteSpace($firstTraceEvent)) "trace command first event line was missing"
+Assert-True ($firstTraceEvent -notmatch "事务#\d+" -and $firstTraceEvent -notmatch "transaction#\d+") "trace command root event still claimed a transaction before journal.begin"
 
 Remove-Item Env:\SCOPEFS_WIDTH -ErrorAction SilentlyContinue
 Write-Host "UI width smoke checks passed."

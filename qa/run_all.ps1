@@ -50,6 +50,11 @@ if ($LASTEXITCODE -ne 0) {
   throw "teaching_acl.ps1 failed with exit code $LASTEXITCODE"
 }
 
+powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "trace_command_tx.ps1")
+if ($LASTEXITCODE -ne 0) {
+  throw "trace_command_tx.ps1 failed with exit code $LASTEXITCODE"
+}
+
 powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "cp_cow.ps1")
 if ($LASTEXITCODE -ne 0) {
   throw "cp_cow.ps1 failed with exit code $LASTEXITCODE"

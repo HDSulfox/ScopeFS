@@ -1259,7 +1259,7 @@ std::string renderTraceTimeline(const Theme& th, const TerminalMetrics& metrics,
   if (title == "Trace timeline") translatedTitle = text(th, "trace_timeline");
   else if (title == "Trace replay / read-only") translatedTitle = text(th, "trace_replay");
   else if (title == "Trace step") translatedTitle = text(th, "trace_step");
-  else if (!title.empty()) translatedTitle = text(th, "trace_timeline") + " / " + truncate(title, 40);
+  else if (!title.empty()) translatedTitle = text(th, "trace_timeline");
   return box(th, translatedTitle, lines, width, "blue") + "\n";
 }
 

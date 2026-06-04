@@ -231,9 +231,10 @@ void TraceSink::emit(std::uint64_t txid,
                      const std::string& reason,
                      const std::string& status) {
   if (filtered(type)) return;
-  for (auto stackIt = stack_.rbegin(); stackIt != stack_.rend(); ++stackIt) {
+  if (!stack_.empty()) {
+    const auto activeSeq = stack_.back();
     for (auto it = ring_.rbegin(); it != ring_.rend(); ++it) {
-      if (it->seq != *stackIt) continue;
+      if (it->seq != activeSeq) continue;
       if (it->type == type && it->status == "start") {
         it->txid = txid;
         it->object = object;
