@@ -215,7 +215,7 @@ std::string plainMapLegendZh(const std::string& what) {
   if (what == "inode") return "图例: I inode-table 0-f owner-inode 数据块 * 共享 . 无关/空闲";
   if (what == "journal") return "图例: J journal 保留区 0-f last-writer tx S super . 无 journal 信号";
   if (what == "owner") return "图例: 0-f owner inode modulo 16 . 无 owner";
-  return "图例: . 空闲 1 引用计数 1 2 引用计数 2 # 引用计数 >2";
+  return "图例: . 空闲 1 引用数 1 2 引用数 2 # 引用数 >2";
 }
 
 } // namespace
@@ -2222,29 +2222,12 @@ CommandResult FileSystemKernel::cmdHelp() {
 
 std::string FileSystemKernel::renderDir(std::uint32_t inodeId, const std::string& path) const {
   const auto& dir = state_.inodes.at(inodeId);
-  auto visibleReferenceCount = [&](const Inode& n) {
-    if (n.type == NodeType::Directory) {
-      std::uint32_t childDirs = 0;
-      for (const auto& [entryName, entry] : n.entries) {
-        if (entryName == "." || entryName == "..") continue;
-        if (entry.type == NodeType::Directory) ++childDirs;
-      }
-      return 2 + childDirs;
-    }
-    std::uint32_t maxBlockRefs = 0;
-    for (auto block : n.blocks) {
-      const auto blockIt = state_.blocks.find(block);
-      if (blockIt != state_.blocks.end()) maxBlockRefs = std::max(maxBlockRefs, blockIt->second.refcount);
-    }
-    return std::max(n.refcount, maxBlockRefs);
-  };
   if (interactiveUi_) {
     std::vector<ui::DirRow> rows;
     for (const auto& [name, de] : dir.entries) {
       const auto it = state_.inodes.find(de.inode);
       if (it == state_.inodes.end()) continue;
-    auto n = it->second;
-    n.refcount = visibleReferenceCount(n);
+      const auto& n = it->second;
       ui::DirRow row;
       row.name = name;
       row.type = nodeMarker(n.type);
@@ -2268,15 +2251,14 @@ std::string FileSystemKernel::renderDir(std::uint32_t inodeId, const std::string
   out << (zh ? "目录 " : "directory ") << path << " (" << dir.entries.size() << " "
       << (zh ? "项" : "entries") << ")\n";
   if (zh) {
-    out << "名称\t类型\t大小\t属主\t用户组\t模式\t索引节点\t版本号\t引用计数\t创建\t修改\n";
+    out << "名称\t类型\t大小\t属主\t用户组\t模式\t索引节点\t版本号\t引用数\t创建\t修改\n";
   } else {
     out << "name\ttype\tsize\towner\tgroup\tmode\tindex node\tversion\treference count\tcreated\tmodified\n";
   }
   for (const auto& [name, de] : dir.entries) {
     const auto it = state_.inodes.find(de.inode);
     if (it == state_.inodes.end()) continue;
-      auto n = it->second;
-      n.refcount = visibleReferenceCount(n);
+    const auto& n = it->second;
     out << name
         << "\t" << plainTypeLabel(n.type, langName_)
         << "\t" << (zh ? "大小 " : "size ") << n.size << "B"
@@ -2285,7 +2267,7 @@ std::string FileSystemKernel::renderDir(std::uint32_t inodeId, const std::string
         << "\t" << modeString(n.mode, n.type == NodeType::Directory)
         << "\t" << (zh ? "索引节点 " : "index node ") << n.id
         << "\t" << (zh ? "版本号 " : "version ") << n.generation
-        << "\t" << (zh ? "引用计数 " : "reference count ") << n.refcount
+        << "\t" << (zh ? "引用数 " : "reference count ") << n.refcount
         << "\t" << (zh ? "创建 " : "created ") << displayTimestamp(n.createdAt)
         << "\t" << (zh ? "修改 " : "modified ") << displayTimestamp(n.modifiedAt)
         << "\n";
@@ -2424,7 +2406,7 @@ std::string FileSystemKernel::renderTree(std::uint32_t inode, const std::string&
   out << prefix;
   if (!root) out << (last ? "└─ " : "├─ ");
   out << name << " [" << it->second.id << ":" << plainTypeLabel(it->second.type, langName_)
-      << " " << (langName_ == "zh" ? "引用计数 " : "reference count ") << it->second.refcount << "]\n";
+      << " " << (langName_ == "zh" ? "引用数 " : "reference count ") << it->second.refcount << "]\n";
   if (it->second.type != NodeType::Directory || seen.count(inode)) return out.str();
   seen.insert(inode);
   std::vector<std::pair<std::string, DirEntry>> children;

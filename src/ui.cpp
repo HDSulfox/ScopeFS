@@ -47,7 +47,7 @@ std::string zh(const std::string& key) {
       {"directory", "目录"},
       {"entries", "项"},
       {"gen", "版本号"},
-      {"ref", "引用计数"},
+      {"ref", "引用数"},
       {"owner_group", "归属"},
       {"size", "大小"},
       {"created", "创建时间"},
@@ -419,7 +419,7 @@ std::string mapWhatLabel(const Theme& th, const std::string& what) {
   if (what == "inode") return th.lang == "zh" ? "索引节点" : "index node";
   if (what == "journal") return th.lang == "zh" ? "日志" : "journal";
   if (what == "blocks") return th.lang == "zh" ? "块" : "blocks";
-  if (what == "refcount") return th.lang == "zh" ? "引用计数" : "reference count";
+  if (what == "refcount") return th.lang == "zh" ? "引用数" : "reference count";
   if (what == "owner") return th.lang == "zh" ? "属主" : "owner";
   return what;
 }
@@ -546,7 +546,7 @@ std::string mapLegend(const Theme& th, const std::string& what) {
   }
   return color(th, th.dim, th.lang == "zh" ? "图例 " : "legend ") +
          color(th, th.gray, th.lang == "zh" ? ". 空闲 " : ". free ") +
-         color(th, th.white, th.lang == "zh" ? "░ 引用计数 1 " : "░ reference count 1 ") +
+         color(th, th.white, th.lang == "zh" ? "░ 引用数 1 " : "░ reference count 1 ") +
          color(th, th.magenta, th.lang == "zh" ? "▒/█ 共享引用" : "▒/█ shared references");
 }
 
@@ -1006,7 +1006,7 @@ std::string renderScope(const Theme& th, const TerminalMetrics& metrics, const K
   std::vector<std::string> hot;
   for (const auto& row : inodeHot) {
     hot.push_back(color(th, th.amber, "#" + std::to_string(row.inode)) + " " + padRight(row.type, 5) +
-                  " " + labelValue(th, th.lang == "zh" ? "引用计数" : "reference count", std::to_string(row.refcount), row.refcount > 1 ? "magenta" : "gray") +
+                  " " + labelValue(th, th.lang == "zh" ? "引用数" : "reference count", std::to_string(row.refcount), row.refcount > 1 ? "magenta" : "gray") +
                   "   " + labelValue(th, th.lang == "zh" ? "打开数" : "open count", std::to_string(row.openCount)) +
                   " " + truncate(row.owner + ":" + row.klass, card - 44));
   }

@@ -34,24 +34,6 @@ function Assert-True([bool]$Condition, [string]$Message) {
   if (!$Condition) { throw $Message }
 }
 
-function Parse-DirRows([string]$Output, [string]$Name) {
-  $prefix = "$Name`t"
-  $rows = @()
-  foreach ($line in ($Output -split "\r?\n")) {
-    if (!$line.StartsWith($prefix)) { continue }
-    $parts = $line -split "`t"
-    if ($parts.Length -lt 11) {
-      throw "dir row for $Name had $($parts.Length) columns: $line"
-    }
-    $rows += [pscustomobject]@{
-      Name = $parts[0]
-      Type = $parts[1]
-      ReferenceCount = ($parts[8] -replace "^reference count ", "")
-    }
-  }
-  return @($rows)
-}
-
 function Decode-Hex([string]$Hex) {
   if ([string]::IsNullOrEmpty($Hex)) { return "" }
   $bytes = New-Object byte[] ($Hex.Length / 2)
@@ -127,15 +109,11 @@ $setup = Run-ScopeText @"
 format
 lang en
 login root root
-mkdir /parent
-mkdir /parent/child
 create /a 0644
 open /a rw
 write 3 $data
 close 3
 cp /a /b
-dir /
-dir /parent/child
 trace 40
 fsck
 exit
@@ -144,15 +122,6 @@ exit
 Assert-True ($setup -match "block\.retain") "cp did not retain any existing data block"
 Assert-True ($setup -match "inode\.clone") "cp did not clone the source inode"
 Assert-True ($setup -match "fsck: clean") "fsck was not clean after cp"
-
-$sourceRows = @(Parse-DirRows $setup "a")
-$copyRows = @(Parse-DirRows $setup "b")
-$parentRows = @(Parse-DirRows $setup "..")
-Assert-True ($sourceRows.Count -eq 1) "dir output did not include source row"
-Assert-True ($copyRows.Count -eq 1) "dir output did not include copy row"
-Assert-True ($sourceRows[0].ReferenceCount -eq "2") "cp source dir reference count expected 2 got $($sourceRows[0].ReferenceCount)"
-Assert-True ($copyRows[0].ReferenceCount -eq "2") "cp copy dir reference count expected 2 got $($copyRows[0].ReferenceCount)"
-Assert-True (@($parentRows | Where-Object { $_.ReferenceCount -eq "3" }).Count -ge 1) "dir .. reference count should show parent directory link count 3"
 
 $state = Read-VolumeState
 $source = Get-RootEntry $state "a"
@@ -182,16 +151,12 @@ delete /a
 open /b r
 read 3 128
 close 3
-dir /
 fsck
 exit
 "@
 
 Assert-True ($afterDelete -match [regex]::Escape($data)) "copy data was not readable after deleting source"
 Assert-True ($afterDelete -match "fsck: clean") "fsck was not clean after deleting source"
-$copyRowsAfterDelete = @(Parse-DirRows $afterDelete "b")
-Assert-True ($copyRowsAfterDelete.Count -eq 1) "dir output did not include copy row after deleting source"
-Assert-True ($copyRowsAfterDelete[0].ReferenceCount -eq "1") "copy dir reference count expected 1 after deleting source got $($copyRowsAfterDelete[0].ReferenceCount)"
 
 $state = Read-VolumeState
 $source = Get-RootEntry $state "a"
