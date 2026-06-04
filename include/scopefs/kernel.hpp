@@ -132,7 +132,7 @@ class FileSystemKernel {
   void crashPoint(const std::string& event, const std::string& phase);
   void maybeCrashNow();
 
-  std::uint32_t allocateInode(NodeType type, const std::string& owner, const std::string& klass, int mode);
+  std::uint32_t allocateInode(NodeType type, const std::string& owner, const std::string& group, int mode);
   std::uint32_t allocateBlock(std::uint32_t ownerInode, const std::string& data, const std::string& flags, std::uint64_t txid);
   void retainInode(std::uint32_t inode);
   void releaseInode(std::uint32_t inode, bool recursive);
@@ -149,8 +149,15 @@ class FileSystemKernel {
 
   bool authCheck(std::uint32_t inode, const std::string& right, const std::string& path, std::string* reason);
   bool canTraverse(const std::string& canonical, bool includeTarget, std::string* reason);
-  std::set<std::string> effectiveClasses(const std::string& user, const std::string& path) const;
+  std::set<std::string> effectiveGroups(const std::string& user, const std::string& path) const;
   bool constraintsAllow(const std::string& constraints, const std::string& path) const;
+  std::string teachingRole(const std::string& user) const;
+  std::set<std::string> teachingCourses(const std::string& user) const;
+  bool isBuiltInGroup(const std::string& group) const;
+  std::string courseForGroup(const std::string& group) const;
+  bool isCourseTeacher(const std::string& user, const std::string& course) const;
+  bool isCourseAssistant(const std::string& user, const std::string& course) const;
+  bool canGrantAclSubject(std::uint32_t inode, const std::string& subject) const;
 
   CommandResult cmdFormat();
   CommandResult cmdLogin(const std::vector<std::string>& args);
@@ -172,11 +179,11 @@ class FileSystemKernel {
   CommandResult cmdMap(const std::vector<std::string>& args);
   CommandResult cmdSnapshot(const std::vector<std::string>& args);
   CommandResult cmdCopy(const std::vector<std::string>& args);
-  CommandResult cmdClass(const std::vector<std::string>& args);
+  CommandResult cmdGroup(const std::vector<std::string>& args);
   CommandResult cmdAcl(const std::vector<std::string>& args);
   CommandResult cmdChmod(const std::vector<std::string>& args);
   CommandResult cmdChown(const std::vector<std::string>& args);
-  CommandResult cmdChclass(const std::vector<std::string>& args);
+  CommandResult cmdChgroup(const std::vector<std::string>& args);
   CommandResult cmdFsck(const std::vector<std::string>& args);
   CommandResult cmdCrash(const std::vector<std::string>& args);
   CommandResult cmdSleep(const std::vector<std::string>& args);

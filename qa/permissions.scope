@@ -15,8 +15,8 @@ logout
 login usr2 usr2
 open /home/usr1/note r
 read 3 64
-class create readers
-class grant readers to usr2 with grant option path_prefix=/home/usr1
-class list
+group create readers
+group grant readers to usr2 with grant option path_prefix=/home/usr1
+group list
 fsck
 exit

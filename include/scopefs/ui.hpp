@@ -65,7 +65,7 @@ struct DirRow {
   std::string name;
   std::string type;
   std::string owner;
-  std::string klass;
+  std::string group;
   std::string mode;
   std::uint32_t inode = 0;
   std::uint32_t generation = 0;
@@ -84,10 +84,18 @@ struct InodeRow {
   std::uint32_t refcount = 0;
   std::uint32_t openCount = 0;
   std::string owner;
-  std::string klass;
+  std::string group;
   std::uint64_t size = 0;
   std::size_t blockCount = 0;
   bool pending = false;
+};
+
+struct SnapshotRow {
+  std::string name;
+  std::uint32_t rootInode = 0;
+  std::uint32_t generation = 0;
+  std::uint64_t txid = 0;
+  std::string createdAt;
 };
 
 struct MapCell {
@@ -124,10 +132,11 @@ std::string renderDir(const Theme& th, const TerminalMetrics& metrics, const std
 std::string renderScope(const Theme& th, const TerminalMetrics& metrics, const KernelStatus& status, const std::vector<InodeRow>& inodeHot, const std::vector<std::pair<std::string, std::string>>& extra);
 std::string renderTree(const Theme& th, const TerminalMetrics& metrics, const std::vector<std::string>& lines);
 std::string renderMap(const Theme& th, const TerminalMetrics& metrics, const std::string& what, const std::vector<MapCell>& cells, std::uint32_t totalBlocks);
+std::string renderSnapshotList(const Theme& th, const TerminalMetrics& metrics, const std::vector<SnapshotRow>& rows);
 std::string renderTraceTimeline(const Theme& th, const TerminalMetrics& metrics, const std::vector<TraceEvent>& events, const std::string& title = "Trace timeline");
 std::string renderReadData(const Theme& th, const TerminalMetrics& metrics, const std::string& data, std::uint64_t oldOffset, std::uint64_t newOffset);
 std::string renderSnapshotDiff(const Theme& th, const TerminalMetrics& metrics, const std::vector<std::string>& diffLines);
-std::string renderClassGraph(const Theme& th, const TerminalMetrics& metrics, const std::vector<std::string>& lines);
+std::string renderGroupGraph(const Theme& th, const TerminalMetrics& metrics, const std::vector<std::string>& lines);
 std::string renderAclGraph(const Theme& th, const TerminalMetrics& metrics, const std::string& title, const std::vector<std::string>& lines);
 
 } // namespace scopefs::ui

@@ -40,7 +40,15 @@ if ($demo -notmatch "/course/lab/report -> /course/lab/report\.copy") {
 if ($demo -notmatch "\+ /course/lab/report\.copy") {
   throw "demo.scope snapshot diff did not include copied report"
 }
+if ($demo -notmatch "name\s+root index node\s+version\s+transaction id\s+created") {
+  throw "demo.scope did not list snapshots with the new snapshot command"
+}
 Run-ScopeScript "permissions.scope" | Out-Null
+
+powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "teaching_acl.ps1")
+if ($LASTEXITCODE -ne 0) {
+  throw "teaching_acl.ps1 failed with exit code $LASTEXITCODE"
+}
 
 powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "cp_cow.ps1")
 if ($LASTEXITCODE -ne 0) {

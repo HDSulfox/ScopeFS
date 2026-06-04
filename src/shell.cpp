@@ -129,7 +129,7 @@ KeyPress readEditorKey() {
 
 bool isPathCommand(const std::string& cmd, std::size_t tokenIndex, const std::vector<std::string>& prior) {
   static const std::set<std::string> firstPath = {
-      "cd", "chdir", "dir", "ls", "mkdir", "rmdir", "create", "open", "delete", "rm", "truncate", "chmod", "chown", "chclass"};
+      "cd", "chdir", "dir", "ls", "mkdir", "rmdir", "create", "open", "delete", "rm", "truncate", "chmod", "chown", "chgroup"};
   if (firstPath.count(cmd) && tokenIndex == 1) return true;
   if (cmd == "cp" && (tokenIndex == 1 || tokenIndex == 2)) return true;
   if (cmd == "acl" && prior.size() >= 2 && tokenIndex == 2) return true;
@@ -347,14 +347,14 @@ std::vector<std::string> Shell::completionCandidates(const std::string& line, st
   static const std::vector<std::string> commands = {
       "login", "logout", "whoami", "format", "mkdir", "rmdir", "chdir", "cd", "dir", "ls",
       "create", "open", "read", "write", "close", "delete", "rm", "truncate", "trace", "scope",
-      "map", "snapshot", "cp", "class", "chmod", "chown", "chclass", "acl", "fsck", "crash",
+      "map", "snapshot", "cp", "group", "chmod", "chown", "chgroup", "acl", "fsck", "crash",
       "sleep", "theme", "lang", "help", "exit"};
   static const std::map<std::string, std::vector<std::string>> subcommands = {
       {"map", {"blocks", "inode", "journal", "refcount", "owner"}},
       {"scope", {"inode", "block", "journal", "open", "tree"}},
       {"trace", {"on", "off", "save", "replay", "step", "clear"}},
-      {"snapshot", {"create", "list", "show", "diff", "rollback", "delete"}},
-      {"class", {"create", "grant", "revoke", "list", "tree"}},
+      {"snapshot", {"create", "diff", "rollback", "delete"}},
+      {"group", {"create", "delete", "grant", "revoke", "list", "tree"}},
       {"acl", {"show", "grant", "revoke"}},
       {"crash", {"now", "after", "before", "at", "clear"}},
       {"theme", {"scope-dark", "blue", "mono"}},

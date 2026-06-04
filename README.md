@@ -31,6 +31,17 @@ Default users after `format`:
 - `admin` / `admin`
 - `usr1` ... `usr8`, password equals username
 
+Teaching identities and default groups after `format`:
+
+```text
+system:    root, admin
+teacher:   usr1(cs101), usr2(cs102)
+assistant: usr3(cs101), usr4(cs102)
+student:   usr5(cs101), usr6(cs101), usr7(cs102), usr8(cs102)
+cs101:     usr1, usr3, usr5, usr6
+cs102:     usr2, usr4, usr7, usr8
+```
+
 ## Command Surface
 
 Session and setup:
@@ -96,24 +107,24 @@ crash at <seq>
 crash clear
 fsck
 fsck --repair
+snapshot
 snapshot create <name>
-snapshot list
-snapshot show <name>
 snapshot diff <a> <b>
 snapshot rollback <name>
 snapshot delete <name>
 cp <src> <dst>
-class create <class_name>
-class grant <class_name> to <user_or_class> [with grant option] [constraints]
-class revoke <class_name> from <user_or_class>
-class list
-class tree
+group create <group_name>
+group delete <group_name>
+group grant <group_name> to <user_or_group> [with grant option] [constraints]
+group revoke <group_name> from <user_or_group>
+group list
+group tree
 chmod <path> <mode>
 chown <path> <user>
-chclass <path> <class_name>
+chgroup <path> <group_name>
 acl show <path>
-acl grant <path> <user_or_class> <rights> [constraints]
-acl revoke <path> <user_or_class> <rights>
+acl grant <path> <user_or_group> <rights> [constraints]
+acl revoke <path> <user_or_group> <rights>
 ```
 
 Crash injection event names include:
@@ -133,7 +144,7 @@ All shell commands enter through `FileSystemKernel`. The kernel owns the shared 
 The persistent volume is a serialized teaching model, not a byte-for-byte POSIX disk image. It still preserves the required kernel concepts:
 
 - superblock with checksum and clean/dirty/recovering mount states
-- inode table with generation, owner, class, mode, block map, open count, delayed deletion
+- inode table with generation, owner, group, mode, block map, open count, delayed deletion
 - directory entries stored as directory file data
 - block metadata with refcount, checksum, last writer txid, owner inode, and flags
 - physical-style journal records containing before/after transaction images

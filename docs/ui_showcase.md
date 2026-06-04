@@ -39,4 +39,4 @@ Remove-Item Env:\SCOPEFS_WIDTH
 - `trace [n]`: event timeline with journal/path/auth/snapshot colors.
 - `map refcount`: colored heatmap with legend and shared-block hotspots.
 - `snapshot diff`: git-like diff with COW marker.
-- `acl show` and `class tree`: grant graph style output.
+- `acl show` and `group tree`: grant graph style output.

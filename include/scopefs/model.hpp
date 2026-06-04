@@ -12,7 +12,7 @@ enum class NodeType {
   Regular,
   Directory,
   SnapshotRoot,
-  ClassObject
+  GroupObject
 };
 
 enum class MountState {
@@ -55,7 +55,7 @@ struct Inode {
   std::uint32_t generation = 1;
   NodeType type = NodeType::Regular;
   std::string owner = "root";
-  std::string klass = "system";
+  std::string group = "system";
   int mode = 0644;
   std::uint64_t size = 0;
   std::uint32_t nlink = 1;
@@ -83,10 +83,10 @@ struct UserRecord {
   std::string name;
   std::string passwordHash;
   std::string home;
-  std::set<std::string> classes;
+  std::set<std::string> groups;
 };
 
-struct ClassDef {
+struct GroupDef {
   std::string name;
   std::string owner = "root";
   std::set<std::string> parents;
@@ -125,7 +125,7 @@ struct FsState {
   std::map<std::uint32_t, Inode> inodes;
   std::map<std::uint32_t, BlockInfo> blocks;
   std::map<std::string, UserRecord> users;
-  std::map<std::string, ClassDef> classes;
+  std::map<std::string, GroupDef> groups;
   std::map<std::string, Snapshot> snapshots;
   std::set<std::uint32_t> freeBlocks;
   std::set<std::uint32_t> freeInodes;

@@ -114,7 +114,7 @@ write 3 abc
 close 3
 dir /
 chmod /file 0600
-chclass /file system
+chgroup /file system
 acl grant /file usr1 r path_prefix=/
 dir /
 truncate /file 1
@@ -153,7 +153,7 @@ $truncateModified = Read-Time $fileRows[3].Modified
 
 Assert-True ($fileRows[1].Created -eq $created0) "write changed file creation time"
 Assert-True ($writeModified -gt $modified0) "write did not advance modified time"
-Assert-True ($metadataModified -eq $writeModified) "chmod/chclass/acl changed modified time"
+Assert-True ($metadataModified -eq $writeModified) "chmod/chgroup/acl changed modified time"
 Assert-True ($truncateModified -gt $metadataModified) "truncate did not advance modified time"
 Assert-True ($fileRows[3].Size -eq "size 1B") "truncate did not update B-sized dir output"
 

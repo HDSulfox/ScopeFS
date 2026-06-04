@@ -15,6 +15,7 @@ open /studio/assets/manifest.copy append
 write 4  + COW branch
 close 4
 snapshot create ui_after
+snapshot
 snapshot diff ui_base ui_after
 scope tree
 scope inode
@@ -23,9 +24,9 @@ trace 16
 acl grant /studio usr1 x path_prefix=/studio
 acl grant /studio/assets/manifest usr1 r path_prefix=/studio
 acl show /studio/assets/manifest
-class create visual-reviewers
-class grant visual-reviewers to usr1 with grant option path_prefix=/studio
-class tree
+group create visual-reviewers
+group grant visual-reviewers to usr1 with grant option path_prefix=/studio
+group tree
 theme blue
 scope
 theme mono

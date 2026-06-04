@@ -31,7 +31,7 @@ std::string nodeMarker(NodeType type) {
     case NodeType::Regular: return "file";
     case NodeType::Directory: return "dir";
     case NodeType::SnapshotRoot: return "snap";
-    case NodeType::ClassObject: return "class";
+    case NodeType::GroupObject: return "group";
   }
   return "unknown";
 }
@@ -86,7 +86,7 @@ std::string plainTypeLabel(NodeType type, const std::string& lang) {
     case NodeType::Regular: return zh ? "文件" : "file";
     case NodeType::Directory: return zh ? "目录" : "directory";
     case NodeType::SnapshotRoot: return zh ? "快照根" : "snapshot root";
-    case NodeType::ClassObject: return zh ? "用户组对象" : "class object";
+    case NodeType::GroupObject: return zh ? "用户组对象" : "group object";
   }
   return zh ? "未知" : "unknown";
 }
@@ -118,7 +118,7 @@ std::string commandTraceType(const std::string& cmd, const std::vector<std::stri
   if (cmd == "cp") return "file.clone";
   if (cmd == "chmod") return "inode.chmod";
   if (cmd == "chown") return "inode.chown";
-  if (cmd == "chclass") return "inode.chclass";
+  if (cmd == "chgroup") return "inode.chgroup";
   if (cmd == "fsck") return "fsck.full";
   if (cmd == "snapshot" && args.size() >= 2) {
     const auto sub = lower(args[1]);
@@ -126,11 +126,12 @@ std::string commandTraceType(const std::string& cmd, const std::vector<std::stri
     if (sub == "rollback") return "snapshot.rollback";
     if (sub == "delete") return "snapshot.delete";
   }
-  if (cmd == "class" && args.size() >= 2) {
+  if (cmd == "group" && args.size() >= 2) {
     const auto sub = lower(args[1]);
-    if (sub == "create") return "class.create";
-    if (sub == "grant") return "class.grant";
-    if (sub == "revoke") return "class.revoke";
+    if (sub == "create") return "group.create";
+    if (sub == "delete") return "group.delete";
+    if (sub == "grant") return "group.grant";
+    if (sub == "revoke") return "group.revoke";
   }
   if (cmd == "acl" && args.size() >= 2) {
     const auto sub = lower(args[1]);
@@ -142,7 +143,7 @@ std::string commandTraceType(const std::string& cmd, const std::vector<std::stri
 
 std::string commandTraceObject(const std::string& cmd, const std::vector<std::string>& args) {
   if (cmd == "cp" && args.size() >= 3) return args[1] + " -> " + args[2];
-  if (cmd == "class" && args.size() >= 3) return args[2];
+  if (cmd == "group" && args.size() >= 3) return args[2];
   if (cmd == "snapshot" && args.size() >= 3) return args[2];
   if (cmd == "acl" && args.size() >= 3) return args[2];
   if (args.size() >= 2) return args[1];
@@ -225,7 +226,7 @@ std::string toString(NodeType type) {
     case NodeType::Regular: return "regular";
     case NodeType::Directory: return "directory";
     case NodeType::SnapshotRoot: return "snapshot_root";
-    case NodeType::ClassObject: return "class_object";
+    case NodeType::GroupObject: return "group_object";
   }
   return "regular";
 }
@@ -233,7 +234,7 @@ std::string toString(NodeType type) {
 NodeType nodeTypeFromString(const std::string& value) {
   if (value == "directory") return NodeType::Directory;
   if (value == "snapshot_root") return NodeType::SnapshotRoot;
-  if (value == "class_object") return NodeType::ClassObject;
+  if (value == "group_object" || value == "class_object") return NodeType::GroupObject;
   return NodeType::Regular;
 }
 
@@ -352,8 +353,8 @@ std::string FileSystemKernel::usage(const std::string& spec) const {
   if (langName_ == "en") return "usage: " + spec;
   std::string out = spec;
   const std::vector<std::pair<std::string, std::string>> repl = {
-      {"<user_or_class>", "<用户或用户组>"},
-      {"<class_name>", "<用户组名>"},
+      {"<user_or_group>", "<用户或用户组>"},
+      {"<group_name>", "<用户组名>"},
       {"[password]", "[密码]"},
       {"[mode]", "[模式]"},
       {"[size]", "[大小]"},
@@ -363,7 +364,7 @@ std::string FileSystemKernel::usage(const std::string& spec) const {
       {"<constraints>", "<约束>"},
       {"<rights>", "<权限>"},
       {"<event>", "<事件>"},
-      {"<class>", "<用户组>"},
+      {"<group>", "<用户组>"},
       {"<file>", "<文件>"},
       {"<user>", "<用户>"},
       {"<path>", "<路径>"},
@@ -517,11 +518,11 @@ CommandResult FileSystemKernel::execute(const std::vector<std::string>& args, co
     else if (cmd == "map") result = cmdMap(args);
     else if (cmd == "snapshot") result = cmdSnapshot(args);
     else if (cmd == "cp") result = cmdCopy(args);
-    else if (cmd == "class") result = cmdClass(args);
+    else if (cmd == "group") result = cmdGroup(args);
     else if (cmd == "acl") result = cmdAcl(args);
     else if (cmd == "chmod") result = cmdChmod(args);
     else if (cmd == "chown") result = cmdChown(args);
-    else if (cmd == "chclass") result = cmdChclass(args);
+    else if (cmd == "chgroup") result = cmdChgroup(args);
     else if (cmd == "fsck") result = cmdFsck(args);
     else if (cmd == "crash") result = cmdCrash(args);
     else if (cmd == "sleep") result = cmdSleep(args);
@@ -575,14 +576,14 @@ void FileSystemKernel::initFreshState() {
     u.name = name;
     u.passwordHash = hashPassword(name, pass);
     u.home = home;
-    u.classes.insert(name);
+    u.groups.insert(name);
     state_.users[name] = u;
-    ClassDef c;
+    GroupDef c;
     c.name = name;
     c.owner = "root";
     c.members.insert(name);
     c.grantOption = false;
-    state_.classes[name] = c;
+    state_.groups[name] = c;
   };
   makeUser("root", "root", "/root");
   makeUser("admin", "admin", "/root");
@@ -590,9 +591,52 @@ void FileSystemKernel::initFreshState() {
     const auto u = "usr" + std::to_string(i);
     makeUser(u, u, "/home/" + u);
   }
-  state_.classes["system"] = ClassDef{"system", "root", {}, {"root", "admin"}, true, "", 1};
-  state_.users["root"].classes.insert("system");
-  state_.users["admin"].classes.insert("system");
+
+  auto addGroup = [&](const std::string& name,
+                      std::set<std::string> parents = {},
+                      bool grantOption = false) {
+    GroupDef g;
+    g.name = name;
+    g.owner = "root";
+    g.parents = std::move(parents);
+    g.grantOption = grantOption;
+    state_.groups[name] = g;
+  };
+  auto addMember = [&](const std::string& group, const std::string& user) {
+    state_.users[user].groups.insert(group);
+    state_.groups[group].members.insert(user);
+  };
+
+  addGroup("system", {}, true);
+  addGroup("teacher");
+  addGroup("assistant");
+  addGroup("student");
+  addGroup("cs101");
+  addGroup("cs102");
+  addGroup("cs101_teacher", {"teacher", "cs101"});
+  addGroup("cs101_assistant", {"assistant", "cs101"});
+  addGroup("cs101_student", {"student", "cs101"});
+  addGroup("cs102_teacher", {"teacher", "cs102"});
+  addGroup("cs102_assistant", {"assistant", "cs102"});
+  addGroup("cs102_student", {"student", "cs102"});
+
+  addMember("system", "root");
+  addMember("system", "admin");
+  addMember("teacher", "usr1");
+  addMember("teacher", "usr2");
+  addMember("assistant", "usr3");
+  addMember("assistant", "usr4");
+  for (const auto& user : {"usr5", "usr6", "usr7", "usr8"}) addMember("student", user);
+  for (const auto& user : {"usr1", "usr3", "usr5", "usr6"}) addMember("cs101", user);
+  for (const auto& user : {"usr2", "usr4", "usr7", "usr8"}) addMember("cs102", user);
+  addMember("cs101_teacher", "usr1");
+  addMember("cs101_assistant", "usr3");
+  addMember("cs101_student", "usr5");
+  addMember("cs101_student", "usr6");
+  addMember("cs102_teacher", "usr2");
+  addMember("cs102_assistant", "usr4");
+  addMember("cs102_student", "usr7");
+  addMember("cs102_student", "usr8");
 
   const auto root = allocateInode(NodeType::Directory, "root", "system", 0755);
   state_.super.activeRoot = root;
@@ -644,7 +688,7 @@ std::string FileSystemKernel::serializeState() const {
       << '|' << s.nextBlock << '|' << s.nextTxid << '|' << toString(s.mountState) << '|' << s.checksum << '\n';
   for (const auto& [id, inode] : state_.inodes) {
     out << "I|" << id << '|' << inode.generation << '|' << toString(inode.type) << '|'
-        << encode(inode.owner) << '|' << encode(inode.klass) << '|' << inode.mode << '|'
+        << encode(inode.owner) << '|' << encode(inode.group) << '|' << inode.mode << '|'
         << inode.size << '|' << inode.nlink << '|' << inode.openCount << '|' << inode.refcount << '|'
         << yn(inode.deletePending) << '|' << csvNumbers(inode.blocks) << '|'
         << encode(inode.createdAt) << '|' << encode(inode.modifiedAt) << '\n';
@@ -662,9 +706,9 @@ std::string FileSystemKernel::serializeState() const {
   }
   for (const auto& [name, user] : state_.users) {
     out << "U|" << encode(name) << '|' << encode(user.passwordHash) << '|' << encode(user.home)
-        << '|' << encode(joinSet(user.classes, ',')) << '\n';
+        << '|' << encode(joinSet(user.groups, ',')) << '\n';
   }
-  for (const auto& [name, cls] : state_.classes) {
+  for (const auto& [name, cls] : state_.groups) {
     out << "C|" << encode(name) << '|' << encode(cls.owner) << '|' << encode(joinSet(cls.parents, ','))
         << '|' << encode(joinSet(cls.members, ',')) << '|' << yn(cls.grantOption) << '|'
         << encode(cls.constraints) << '|' << cls.generation << '\n';
@@ -703,7 +747,7 @@ void FileSystemKernel::deserializeState(const std::string& text) {
       inode.generation = static_cast<std::uint32_t>(std::stoul(f[2]));
       inode.type = nodeTypeFromString(f[3]);
       inode.owner = decode(f[4]);
-      inode.klass = decode(f[5]);
+      inode.group = decode(f[5]);
       inode.mode = std::stoi(f[6]);
       inode.size = std::stoull(f[7]);
       inode.nlink = static_cast<std::uint32_t>(std::stoul(f[8]));
@@ -747,10 +791,10 @@ void FileSystemKernel::deserializeState(const std::string& text) {
       u.name = decode(f[1]);
       u.passwordHash = decode(f[2]);
       u.home = decode(f[3]);
-      u.classes = splitSet(decode(f[4]), ',');
+      u.groups = splitSet(decode(f[4]), ',');
       state_.users[u.name] = u;
     } else if (f[0] == "C" && f.size() >= 8) {
-      ClassDef c;
+      GroupDef c;
       c.name = decode(f[1]);
       c.owner = decode(f[2]);
       c.parents = splitSet(decode(f[3]), ',');
@@ -758,7 +802,7 @@ void FileSystemKernel::deserializeState(const std::string& text) {
       c.grantOption = parseBool(f[5]);
       c.constraints = decode(f[6]);
       c.generation = static_cast<std::uint32_t>(std::stoul(f[7]));
-      state_.classes[c.name] = c;
+      state_.groups[c.name] = c;
     } else if (f[0] == "P" && f.size() >= 6) {
       Snapshot p;
       p.name = decode(f[1]);
@@ -895,16 +939,16 @@ bool FileSystemKernel::reloadIfEpochChanged() {
 bool FileSystemKernel::isMutationCommand(const std::string& cmd, const std::vector<std::string>& args) const {
   static const std::set<std::string> always = {
       "format", "mkdir", "rmdir", "create", "write", "close", "delete", "rm", "truncate",
-      "cp", "chmod", "chown", "chclass", "logout"};
+      "cp", "chmod", "chown", "chgroup", "logout"};
   if (always.count(cmd)) return true;
   if (cmd == "open" && args.size() >= 3 && lower(args[2]).find("truncate") != std::string::npos) return true;
   if (cmd == "snapshot" && args.size() >= 2) {
     const auto sub = lower(args[1]);
     return sub == "create" || sub == "rollback" || sub == "delete";
   }
-  if (cmd == "class" && args.size() >= 2) {
+  if (cmd == "group" && args.size() >= 2) {
     const auto sub = lower(args[1]);
-    return sub == "create" || sub == "grant" || sub == "revoke";
+    return sub == "create" || sub == "delete" || sub == "grant" || sub == "revoke";
   }
   if (cmd == "acl" && args.size() >= 2) {
     const auto sub = lower(args[1]);
@@ -973,7 +1017,7 @@ void FileSystemKernel::maybeCrashNow() {
   throw CrashException(crashMode_.empty() ? "now" : crashMode_ + ":" + crashEvent_);
 }
 
-std::uint32_t FileSystemKernel::allocateInode(NodeType type, const std::string& owner, const std::string& klass, int mode) {
+std::uint32_t FileSystemKernel::allocateInode(NodeType type, const std::string& owner, const std::string& group, int mode) {
   if (state_.freeInodes.empty()) throw std::runtime_error("no free inode");
   const auto id = *state_.freeInodes.begin();
   state_.freeInodes.erase(id);
@@ -981,7 +1025,7 @@ std::uint32_t FileSystemKernel::allocateInode(NodeType type, const std::string& 
   inode.id = id;
   inode.type = type;
   inode.owner = owner;
-  inode.klass = klass;
+  inode.group = group;
   inode.mode = mode;
   inode.generation = 1;
   inode.refcount = 1;
@@ -1196,7 +1240,7 @@ bool FileSystemKernel::ensureMutablePath(const std::string& targetPath, bool inc
 
 std::uint32_t FileSystemKernel::cloneInode(std::uint32_t src, std::uint64_t txid, bool preserveTimes) {
   const auto old = state_.inodes.at(src);
-  const auto id = allocateInode(old.type, old.owner, old.klass, old.mode);
+  const auto id = allocateInode(old.type, old.owner, old.group, old.mode);
   auto& clone = state_.inodes[id];
   clone.generation = old.generation + 1;
   clone.size = old.size;
@@ -1247,9 +1291,21 @@ bool FileSystemKernel::authCheck(std::uint32_t inodeId, const std::string& right
     authSpan.finish(path, "-", right, "owner mode", "allow");
     return true;
   }
-  const auto classes = effectiveClasses(activeUser_, path);
-  if (classes.count(inode.klass) && modeAllows(3)) {
-    if (reason) *reason = "file group mode allows via " + inode.klass;
+  const auto groups = effectiveGroups(activeUser_, path);
+  const auto course = courseForGroup(inode.group);
+  if (!course.empty() && groups.count(course + "_teacher") != 0) {
+    if (reason) *reason = "course teacher policy allows via " + course;
+    authSpan.finish(path, "-", right, "course teacher policy", "allow");
+    return true;
+  }
+  if (!course.empty() && groups.count(course + "_assistant") != 0 &&
+      (right == "r" || right == "w" || right == "x" || right == "c" || right == "d")) {
+    if (reason) *reason = "course assistant policy allows via " + course;
+    authSpan.finish(path, "-", right, "course assistant policy", "allow");
+    return true;
+  }
+  if (groups.count(inode.group) && modeAllows(3)) {
+    if (reason) *reason = "file group mode allows via " + inode.group;
     authSpan.finish(path, "-", right, "group mode", "allow");
     return true;
   }
@@ -1259,7 +1315,7 @@ bool FileSystemKernel::authCheck(std::uint32_t inodeId, const std::string& right
     return true;
   }
   for (const auto& acl : inode.acl) {
-    const bool subjectMatch = acl.subject == activeUser_ || classes.count(acl.subject) != 0;
+    const bool subjectMatch = acl.subject == activeUser_ || groups.count(acl.subject) != 0;
     if (subjectMatch && rightsContain(acl.rights, right) && constraintsAllow(acl.constraints, path)) {
       if (reason) *reason = "ACL allows " + acl.subject;
       authSpan.finish(path, "-", right, "ACL " + acl.subject, "allow");
@@ -1303,20 +1359,20 @@ bool FileSystemKernel::canTraverse(const std::string& canonical, bool includeTar
   return true;
 }
 
-std::set<std::string> FileSystemKernel::effectiveClasses(const std::string& user, const std::string& path) const {
+std::set<std::string> FileSystemKernel::effectiveGroups(const std::string& user, const std::string& path) const {
   std::set<std::string> out;
   auto userIt = state_.users.find(user);
   if (userIt == state_.users.end()) return out;
   std::queue<std::string> q;
-  for (const auto& c : userIt->second.classes) q.push(c);
+  for (const auto& c : userIt->second.groups) q.push(c);
   while (!q.empty()) {
     const auto c = q.front();
     q.pop();
     if (out.count(c)) continue;
-    auto clsIt = state_.classes.find(c);
-    if (clsIt != state_.classes.end() && !constraintsAllow(clsIt->second.constraints, path)) continue;
+    auto clsIt = state_.groups.find(c);
+    if (clsIt != state_.groups.end() && !constraintsAllow(clsIt->second.constraints, path)) continue;
     out.insert(c);
-    if (clsIt != state_.classes.end()) {
+    if (clsIt != state_.groups.end()) {
       for (const auto& p : clsIt->second.parents) q.push(p);
     }
   }
@@ -1333,6 +1389,67 @@ bool FileSystemKernel::constraintsAllow(const std::string& constraints, const st
     }
   }
   return true;
+}
+
+std::string FileSystemKernel::teachingRole(const std::string& user) const {
+  const auto it = state_.users.find(user);
+  if (it == state_.users.end()) return "-";
+  if (it->second.groups.count("system")) return "system";
+  if (it->second.groups.count("teacher")) return "teacher";
+  if (it->second.groups.count("assistant")) return "assistant";
+  if (it->second.groups.count("student")) return "student";
+  return "-";
+}
+
+std::set<std::string> FileSystemKernel::teachingCourses(const std::string& user) const {
+  std::set<std::string> out;
+  const auto it = state_.users.find(user);
+  if (it == state_.users.end()) return out;
+  for (const auto& group : it->second.groups) {
+    if (group == "cs101" || group == "cs102") out.insert(group);
+  }
+  return out;
+}
+
+bool FileSystemKernel::isBuiltInGroup(const std::string& group) const {
+  static const std::set<std::string> builtIns = {
+      "system", "teacher", "assistant", "student",
+      "cs101", "cs102",
+      "cs101_teacher", "cs101_assistant", "cs101_student",
+      "cs102_teacher", "cs102_assistant", "cs102_student",
+      "root", "admin", "usr1", "usr2", "usr3", "usr4", "usr5", "usr6", "usr7", "usr8"};
+  return builtIns.count(group) != 0;
+}
+
+std::string FileSystemKernel::courseForGroup(const std::string& group) const {
+  if (group == "cs101" || startsWith(group, "cs101_")) return "cs101";
+  if (group == "cs102" || startsWith(group, "cs102_")) return "cs102";
+  return "";
+}
+
+bool FileSystemKernel::isCourseTeacher(const std::string& user, const std::string& course) const {
+  if (course.empty()) return false;
+  return effectiveGroups(user, "/").count(course + "_teacher") != 0;
+}
+
+bool FileSystemKernel::isCourseAssistant(const std::string& user, const std::string& course) const {
+  if (course.empty()) return false;
+  return effectiveGroups(user, "/").count(course + "_assistant") != 0;
+}
+
+bool FileSystemKernel::canGrantAclSubject(std::uint32_t inodeId, const std::string& subject) const {
+  if (isRoot()) return true;
+  const auto inodeIt = state_.inodes.find(inodeId);
+  if (inodeIt == state_.inodes.end()) return false;
+  const auto course = courseForGroup(inodeIt->second.group);
+  if (course.empty()) return true;
+
+  if (!isCourseTeacher(activeUser_, course) && !isCourseAssistant(activeUser_, course)) return false;
+  const auto groupCourse = courseForGroup(subject);
+  if (groupCourse == course) return true;
+  const auto userIt = state_.users.find(subject);
+  if (userIt == state_.users.end()) return false;
+  return teachingCourses(subject).count(course) != 0;
 }
 
 CommandResult FileSystemKernel::cmdFormat() {
@@ -1396,8 +1513,10 @@ CommandResult FileSystemKernel::cmdLogout() {
 CommandResult FileSystemKernel::cmdWhoami() {
   std::ostringstream out;
   out << "user: " << activeUser_ << "\n";
+  out << "role: " << teachingRole(activeUser_) << "\n";
+  out << "courses: " << joinSet(teachingCourses(activeUser_), ',') << "\n";
   out << "cwd : " << session().cwd << "\n";
-  out << "groups: " << joinSet(effectiveClasses(activeUser_, session().cwd), ',') << "\n";
+  out << "groups: " << joinSet(effectiveGroups(activeUser_, session().cwd), ',') << "\n";
   return ok(out.str());
 }
 
@@ -1489,7 +1608,7 @@ CommandResult FileSystemKernel::cmdCreate(const std::vector<std::string>& args) 
   auto tx = beginTx("create");
   ensureMutablePath(rp.parentPath, true, tx.id, nullptr);
   rp = resolve(args[1], false);
-  const auto id = allocateInode(NodeType::Regular, activeUser_, activeUser_, args.size() >= 3 ? parseMode(args[2], 0644) : 0644);
+  const auto id = allocateInode(NodeType::Regular, activeUser_, activeUser_, args.size() >= 3 ? parseMode(args[2], 0640) : 0640);
   auto& parent = state_.inodes[rp.parent];
   parent.entries[rp.leaf] = {rp.leaf, NodeType::Regular, id, state_.inodes[id].generation};
   refreshDirBlock(parent, tx.id);
@@ -1788,29 +1907,32 @@ CommandResult FileSystemKernel::cmdMap(const std::vector<std::string>& args) {
 }
 
 CommandResult FileSystemKernel::cmdSnapshot(const std::vector<std::string>& args) {
-  if (args.size() < 2) return err(ErrorCode::InvalidArgument, usage("snapshot create|list|show|diff|rollback|delete"));
-  const auto sub = lower(args[1]);
-  if (sub == "list") {
+  auto renderSnapshots = [&]() {
+    std::vector<ui::SnapshotRow> rows;
+    for (const auto& [name, s] : state_.snapshots) {
+      ui::SnapshotRow row;
+      row.name = name;
+      row.rootInode = s.rootInode;
+      row.generation = s.generation;
+      row.txid = s.txid;
+      row.createdAt = displayTimestamp(s.createdAt);
+      rows.push_back(row);
+    }
     if (interactiveUi_) {
-      std::vector<std::string> lines;
-      for (const auto& [name, c] : state_.classes) {
-        std::string line = name;
-        if (!c.parents.empty()) line += " inherits " + joinSet(c.parents, ',');
-        line += "  members=" + joinSet(c.members, ',');
-        line += c.grantOption ? "  grant-option" : "  no-grant";
-        if (!c.constraints.empty()) line += "  " + c.constraints;
-        lines.push_back(line);
-      }
-      return ok(ui::renderClassGraph(ui::theme(ansiUi_, themeName_, langName_), ui::detectMetrics(), lines));
+      return ok(ui::renderSnapshotList(ui::theme(ansiUi_, themeName_, langName_), ui::detectMetrics(), rows));
     }
     std::ostringstream out;
     out << "name                 root index node  version  transaction id  created\n";
-    for (const auto& [name, s] : state_.snapshots) {
-      out << std::left << std::setw(20) << name << " " << std::right << std::setw(15) << s.rootInode
-          << std::setw(9) << s.generation << std::setw(16) << s.txid << "  " << displayTimestamp(s.createdAt) << "\n";
+    for (const auto& row : rows) {
+      out << std::left << std::setw(20) << row.name << " " << std::right << std::setw(15) << row.rootInode
+          << std::setw(9) << row.generation << std::setw(16) << row.txid << "  " << row.createdAt << "\n";
     }
     return ok(out.str());
+  };
+  if (args.size() < 2) {
+    return renderSnapshots();
   }
+  const auto sub = lower(args[1]);
   if (sub == "create") {
     if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("snapshot create <name>"));
     if (state_.snapshots.count(args[2])) return err(ErrorCode::Exists, "snapshot already exists");
@@ -1826,16 +1948,6 @@ CommandResult FileSystemKernel::cmdSnapshot(const std::vector<std::string>& args
     trace_.emit(tx.id, "snapshot.create", s.name, "-", std::to_string(s.rootInode), "O(1) root reference", "ok");
     commitTx(tx);
     return ok("snapshot " + s.name + " root=" + std::to_string(s.rootInode) + "\n");
-  }
-  if (sub == "show") {
-    if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("snapshot show <name>"));
-    auto it = state_.snapshots.find(args[2]);
-    if (it == state_.snapshots.end()) return err(ErrorCode::NotFound, "snapshot not found");
-    std::ostringstream out;
-    out << "snapshot " << it->second.name << "\nroot index node " << it->second.rootInode
-        << "\nversion " << it->second.generation << "\ntransaction id " << it->second.txid
-        << "\ncreated " << displayTimestamp(it->second.createdAt) << "\n";
-    return ok(out.str());
   }
   if (sub == "diff") {
     if (args.size() < 4) return err(ErrorCode::InvalidArgument, usage("snapshot diff <a> <b>"));
@@ -1931,13 +2043,13 @@ CommandResult FileSystemKernel::cmdCopy(const std::vector<std::string>& args) {
   return ok(msg("copied ", "已复制 ") + src.canonical + " -> " + dst.canonical + "\n");
 }
 
-CommandResult FileSystemKernel::cmdClass(const std::vector<std::string>& args) {
-  if (args.size() < 2) return err(ErrorCode::InvalidArgument, usage("class create|grant|revoke|list|tree"));
+CommandResult FileSystemKernel::cmdGroup(const std::vector<std::string>& args) {
+  if (args.size() < 2) return err(ErrorCode::InvalidArgument, usage("group create|delete|grant|revoke|list|tree"));
   const auto sub = lower(args[1]);
   if (sub == "list") {
     std::ostringstream out;
     out << "group                owner      parents              members              grant constraints\n";
-    for (const auto& [name, c] : state_.classes) {
+    for (const auto& [name, c] : state_.groups) {
       out << std::left << std::setw(20) << name << " " << std::setw(10) << c.owner << " "
           << std::setw(20) << joinSet(c.parents, ',') << " " << std::setw(20)
           << joinSet(c.members, ',') << " " << std::setw(5) << boolText(c.grantOption)
@@ -1948,38 +2060,121 @@ CommandResult FileSystemKernel::cmdClass(const std::vector<std::string>& args) {
   if (sub == "tree") {
     std::ostringstream out;
     std::vector<std::string> lines;
-    for (const auto& [name, c] : state_.classes) {
-      out << name;
-      if (!c.parents.empty()) out << " inherits " << joinSet(c.parents, ',');
-      out << "\n";
-      std::string line = name;
-      if (!c.parents.empty()) line += " inherits " + joinSet(c.parents, ',');
-      lines.push_back(line);
+    out << "ScopeFS group tree\n";
+    std::set<std::string> emittedRoots;
+    auto describeMember = [&](const std::string& member) {
+      auto userIt = state_.users.find(member);
+      if (userIt == state_.users.end()) return "group " + member;
+      const auto courses = teachingCourses(member);
+      return "member " + member + " role=" + teachingRole(member) + " courses=" +
+             (courses.empty() ? "-" : joinSet(courses, ','));
+    };
+    auto childGroups = [&](const std::string& parent) {
+      std::vector<std::string> children;
+      for (const auto& [name, group] : state_.groups) {
+        if (group.parents.count(parent)) children.push_back(name);
+      }
+      std::sort(children.begin(), children.end());
+      return children;
+    };
+    std::function<void(const std::string&, const std::string&, const std::string&, std::set<std::string>)> emitGroup =
+        [&](const std::string& name, const std::string& headerPrefix, const std::string& childPrefix, std::set<std::string> path) {
+          auto it = state_.groups.find(name);
+          if (it == state_.groups.end()) return;
+          const auto& group = it->second;
+          std::string header = "group " + name + " owner=" + group.owner + " grant=" + boolText(group.grantOption);
+          if (!group.parents.empty()) header += " parents=" + joinSet(group.parents, ',');
+          if (!group.constraints.empty()) header += " constraints=" + group.constraints;
+          if (headerPrefix.empty()) {
+            out << "● " << header << "\n";
+            lines.push_back("● " + header);
+          } else {
+            out << headerPrefix << header << "\n";
+            lines.push_back(headerPrefix + header);
+          }
+          if (path.count(name)) return;
+          path.insert(name);
+
+          std::vector<std::string> branches;
+          for (const auto& child : childGroups(name)) branches.push_back("group:" + child);
+          for (const auto& member : group.members) branches.push_back("member:" + member);
+          std::sort(branches.begin(), branches.end());
+          for (std::size_t i = 0; i < branches.size(); ++i) {
+            const bool last = i + 1 == branches.size();
+            const auto stem = last ? "└─ " : "├─ ";
+            const auto branchPrefix = childPrefix + stem;
+            const auto nextPrefix = childPrefix + (last ? "   " : "│  ");
+            const auto value = branches[i].substr(branches[i].find(':') + 1);
+            if (startsWith(branches[i], "group:")) {
+              emitGroup(value, branchPrefix, nextPrefix, path);
+            } else {
+              const auto line = branchPrefix + describeMember(value);
+              out << line << "\n";
+              lines.push_back(line);
+            }
+          }
+        };
+
+    const std::vector<std::string> preferredRoots = {"system", "teacher", "assistant", "student", "cs101", "cs102"};
+    for (const auto& root : preferredRoots) {
+      if (state_.groups.count(root)) {
+        emitGroup(root, "", "", {});
+        emittedRoots.insert(root);
+      }
     }
-    if (interactiveUi_) return ok(ui::renderClassGraph(ui::theme(ansiUi_, themeName_, langName_), ui::detectMetrics(), lines));
+    for (const auto& [name, group] : state_.groups) {
+      if (emittedRoots.count(name) || !group.parents.empty()) continue;
+      emitGroup(name, "", "", {});
+    }
+    if (interactiveUi_) return ok(ui::renderGroupGraph(ui::theme(ansiUi_, themeName_, langName_), ui::detectMetrics(), lines));
     return ok(out.str());
   }
   if (sub == "create") {
-    if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("class create <class_name>"));
-    if (state_.classes.count(args[2])) return err(ErrorCode::Exists, "class exists");
-    auto tx = beginTx("class.create");
-    ClassDef c;
+    if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("group create <group_name>"));
+    if (state_.groups.count(args[2])) return err(ErrorCode::Exists, "group exists");
+    auto tx = beginTx("group.create");
+    GroupDef c;
     c.name = args[2];
     c.owner = activeUser_;
     c.members.insert(activeUser_);
     c.grantOption = true;
-    state_.classes[c.name] = c;
-    state_.users[activeUser_].classes.insert(c.name);
-    trace_.emit(tx.id, "class.create", c.name, "-", activeUser_, "create user group", "ok");
+    state_.groups[c.name] = c;
+    state_.users[activeUser_].groups.insert(c.name);
+    trace_.emit(tx.id, "group.create", c.name, "-", activeUser_, "create user group", "ok");
     commitTx(tx);
     return ok("group created " + c.name + "\n");
   }
+  if (sub == "delete") {
+    if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("group delete <group_name>"));
+    const auto groupName = args[2];
+    auto it = state_.groups.find(groupName);
+    if (it == state_.groups.end()) return err(ErrorCode::NotFound, "group not found");
+    if (!isRoot() && (isBuiltInGroup(groupName) || it->second.owner != activeUser_)) {
+      return err(ErrorCode::PermissionDenied, "only owner/root can delete this group");
+    }
+    auto tx = beginTx("group.delete");
+    for (auto& [userName, user] : state_.users) {
+      user.groups.erase(groupName);
+      (void)userName;
+    }
+    for (auto& [name, group] : state_.groups) {
+      group.parents.erase(groupName);
+      group.members.erase(groupName);
+      (void)name;
+    }
+    state_.groups.erase(groupName);
+    trace_.emit(tx.id, "group.delete", groupName, "-", "deleted", "delete user group", "ok");
+    commitTx(tx);
+    return ok("group deleted " + groupName + "\n");
+  }
   if (sub == "grant") {
-    if (args.size() < 5 || lower(args[3]) != "to") return err(ErrorCode::InvalidArgument, usage("class grant <class> to <user_or_class> [with grant option] [constraints]"));
+    if (args.size() < 5 || lower(args[3]) != "to") return err(ErrorCode::InvalidArgument, usage("group grant <group> to <user_or_group> [with grant option] [constraints]"));
     const auto cls = args[2];
     const auto target = args[4];
-    if (!state_.classes.count(cls)) return err(ErrorCode::NotFound, "class not found");
-    if (!isRoot() && !state_.classes[cls].grantOption && state_.classes[cls].owner != activeUser_) return err(ErrorCode::PermissionDenied, "grant option missing");
+    if (!state_.groups.count(cls)) return err(ErrorCode::NotFound, "group not found");
+    if (!state_.users.count(target) && !state_.groups.count(target)) return err(ErrorCode::NotFound, "user/group not found");
+    if (!isRoot() && isBuiltInGroup(cls)) return err(ErrorCode::PermissionDenied, "only root/admin can modify built-in groups");
+    if (!isRoot() && !state_.groups[cls].grantOption && state_.groups[cls].owner != activeUser_) return err(ErrorCode::PermissionDenied, "grant option missing");
     bool grantOption = false;
     std::string constraints;
     for (std::size_t i = 5; i < args.size(); ++i) {
@@ -1991,42 +2186,38 @@ CommandResult FileSystemKernel::cmdClass(const std::vector<std::string>& args) {
         constraints += args[i];
       }
     }
-    auto tx = beginTx("class.grant");
+    auto tx = beginTx("group.grant");
     if (state_.users.count(target)) {
-      state_.users[target].classes.insert(cls);
-      state_.classes[cls].members.insert(target);
+      state_.users[target].groups.insert(cls);
+      state_.groups[cls].members.insert(target);
     } else {
-      if (!state_.classes.count(target)) {
-        ClassDef c;
-        c.name = target;
-        c.owner = activeUser_;
-        state_.classes[target] = c;
-      }
-      state_.classes[target].parents.insert(cls);
-      state_.classes[cls].members.insert(target);
+      state_.groups[target].parents.insert(cls);
+      state_.groups[cls].members.insert(target);
     }
-    if (grantOption) state_.classes[cls].grantOption = true;
-    if (!constraints.empty()) state_.classes[cls].constraints = constraints;
-    ++state_.classes[cls].generation;
-    trace_.emit(tx.id, "class.grant", cls, "-", target, "grant user group", "ok");
+    if (grantOption) state_.groups[cls].grantOption = true;
+    if (!constraints.empty()) state_.groups[cls].constraints = constraints;
+    ++state_.groups[cls].generation;
+    trace_.emit(tx.id, "group.grant", cls, "-", target, "grant user group", "ok");
     commitTx(tx);
     return ok("granted " + cls + " to " + target + "\n");
   }
   if (sub == "revoke") {
-    if (args.size() < 5 || lower(args[3]) != "from") return err(ErrorCode::InvalidArgument, usage("class revoke <class> from <user_or_class>"));
+    if (args.size() < 5 || lower(args[3]) != "from") return err(ErrorCode::InvalidArgument, usage("group revoke <group> from <user_or_group>"));
     const auto cls = args[2];
     const auto target = args[4];
-    if (!state_.classes.count(cls)) return err(ErrorCode::NotFound, "class not found");
-    auto tx = beginTx("class.revoke");
-    if (state_.users.count(target)) state_.users[target].classes.erase(cls);
-    if (state_.classes.count(target)) state_.classes[target].parents.erase(cls);
-    state_.classes[cls].members.erase(target);
-    ++state_.classes[cls].generation;
-    trace_.emit(tx.id, "class.revoke", cls, target, "revoked", "generation invalidates downstream grants", "ok");
+    if (!state_.groups.count(cls)) return err(ErrorCode::NotFound, "group not found");
+    if (!isRoot() && isBuiltInGroup(cls)) return err(ErrorCode::PermissionDenied, "only root/admin can modify built-in groups");
+    if (!isRoot() && state_.groups[cls].owner != activeUser_ && !state_.groups[cls].grantOption) return err(ErrorCode::PermissionDenied, "grant option missing");
+    auto tx = beginTx("group.revoke");
+    if (state_.users.count(target)) state_.users[target].groups.erase(cls);
+    if (state_.groups.count(target)) state_.groups[target].parents.erase(cls);
+    state_.groups[cls].members.erase(target);
+    ++state_.groups[cls].generation;
+    trace_.emit(tx.id, "group.revoke", cls, target, "revoked", "generation invalidates downstream grants", "ok");
     commitTx(tx);
     return ok("revoked " + cls + " from " + target + "\n");
   }
-  return err(ErrorCode::InvalidArgument, msg("unknown class subcommand", "未知 class 子命令"));
+  return err(ErrorCode::InvalidArgument, msg("unknown group subcommand", "未知 group 子命令"));
 }
 
 CommandResult FileSystemKernel::cmdAcl(const std::vector<std::string>& args) {
@@ -2051,12 +2242,14 @@ CommandResult FileSystemKernel::cmdAcl(const std::vector<std::string>& args) {
     return ok(out.str());
   }
   if (sub == "grant") {
-    if (args.size() < 5) return err(ErrorCode::InvalidArgument, usage("acl grant <path> <user_or_class> <rights> [constraints]"));
+    if (args.size() < 5) return err(ErrorCode::InvalidArgument, usage("acl grant <path> <user_or_group> <rights> [constraints]"));
+    if (!state_.users.count(args[3]) && !state_.groups.count(args[3])) return err(ErrorCode::NotFound, "user/group not found");
     ResolvedPath rp;
     try { rp = resolve(args[2], true); } catch (const std::exception& ex) { return err(ErrorCode::NotFound, ex.what()); }
     std::string reason;
     if (!canTraverse(rp.canonical, false, &reason)) return err(ErrorCode::PermissionDenied, "access denied: " + reason);
     if (!authCheck(rp.inode, "g", rp.canonical, &reason)) return err(ErrorCode::PermissionDenied, "access denied: " + reason);
+    if (!canGrantAclSubject(rp.inode, args[3])) return err(ErrorCode::PermissionDenied, "cannot grant ACL outside this course boundary");
     auto tx = beginTx("acl.grant");
     ensureMutablePath(rp.canonical, true, tx.id, &rp);
     AclEntry acl;
@@ -2072,11 +2265,13 @@ CommandResult FileSystemKernel::cmdAcl(const std::vector<std::string>& args) {
     return ok("acl granted\n");
   }
   if (sub == "revoke") {
-    if (args.size() < 5) return err(ErrorCode::InvalidArgument, usage("acl revoke <path> <user_or_class> <rights>"));
+    if (args.size() < 5) return err(ErrorCode::InvalidArgument, usage("acl revoke <path> <user_or_group> <rights>"));
     ResolvedPath rp;
     try { rp = resolve(args[2], true); } catch (const std::exception& ex) { return err(ErrorCode::NotFound, ex.what()); }
     std::string reason;
     if (!canTraverse(rp.canonical, false, &reason)) return err(ErrorCode::PermissionDenied, "access denied: " + reason);
+    if (!authCheck(rp.inode, "g", rp.canonical, &reason)) return err(ErrorCode::PermissionDenied, "access denied: " + reason);
+    if (!canGrantAclSubject(rp.inode, args[3])) return err(ErrorCode::PermissionDenied, "cannot revoke ACL outside this course boundary");
     auto tx = beginTx("acl.revoke");
     ensureMutablePath(rp.canonical, true, tx.id, &rp);
     auto& acl = state_.inodes[rp.inode].acl;
@@ -2108,7 +2303,7 @@ CommandResult FileSystemKernel::cmdChmod(const std::vector<std::string>& args) {
 
 CommandResult FileSystemKernel::cmdChown(const std::vector<std::string>& args) {
   if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("chown <path> <user>"));
-  if (!isRoot()) return err(ErrorCode::PermissionDenied, "only root can chown");
+  if (!isRoot()) return err(ErrorCode::PermissionDenied, "only root/admin can chown");
   if (!state_.users.count(args[2])) return err(ErrorCode::NotFound, "user not found");
   ResolvedPath rp;
   try { rp = resolve(args[1], true); } catch (const std::exception& ex) { return err(ErrorCode::NotFound, ex.what()); }
@@ -2123,21 +2318,21 @@ CommandResult FileSystemKernel::cmdChown(const std::vector<std::string>& args) {
   return ok("owner updated\n");
 }
 
-CommandResult FileSystemKernel::cmdChclass(const std::vector<std::string>& args) {
-  if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("chclass <path> <class>"));
-  if (!state_.classes.count(args[2])) return err(ErrorCode::NotFound, "group not found");
+CommandResult FileSystemKernel::cmdChgroup(const std::vector<std::string>& args) {
+  if (args.size() < 3) return err(ErrorCode::InvalidArgument, usage("chgroup <path> <group>"));
+  if (!state_.groups.count(args[2])) return err(ErrorCode::NotFound, "group not found");
   ResolvedPath rp;
   try { rp = resolve(args[1], true); } catch (const std::exception& ex) { return err(ErrorCode::NotFound, ex.what()); }
   std::string reason;
   if (!canTraverse(rp.canonical, false, &reason)) return err(ErrorCode::PermissionDenied, "access denied: " + reason);
-  if (!isRoot() && state_.inodes[rp.inode].owner != activeUser_) return err(ErrorCode::PermissionDenied, "only owner/root can chclass");
-  auto tx = beginTx("chclass");
+  if (!isRoot() && state_.inodes[rp.inode].owner != activeUser_) return err(ErrorCode::PermissionDenied, "only owner/root can chgroup");
+  auto tx = beginTx("chgroup");
   ensureMutablePath(rp.canonical, true, tx.id, &rp);
-  const auto before = state_.inodes[rp.inode].klass;
-  state_.inodes[rp.inode].klass = args[2];
-  trace_.emit(tx.id, "inode.chclass", rp.canonical, before, args[2], "file group changed", "ok");
+  const auto before = state_.inodes[rp.inode].group;
+  state_.inodes[rp.inode].group = args[2];
+  trace_.emit(tx.id, "inode.chgroup", rp.canonical, before, args[2], "file group changed", "ok");
   commitTx(tx);
-  return ok("class updated\n");
+  return ok("group updated\n");
 }
 
 CommandResult FileSystemKernel::cmdFsck(const std::vector<std::string>& args) {
@@ -2204,8 +2399,8 @@ CommandResult FileSystemKernel::cmdHelp() {
         << "  mkdir/rmdir/chdir/dir/create/open/read/write/close/delete/rm/truncate\n"
         << "  trace [数量] | trace <命令> | trace on/off/save <文件>/replay <文件>/step/clear\n"
         << "  scope [inode|block|journal|open|tree] | map [blocks|inode|journal|refcount|owner]\n"
-        << "  snapshot create/list/show/diff/rollback/delete | cp <源> <目标>\n"
-        << "  class create/grant/revoke/list/tree | chmod/chown/chclass | acl show/grant/revoke\n"
+        << "  snapshot | snapshot create/diff/rollback/delete | cp <源> <目标>\n"
+        << "  group create/delete/grant/revoke/list/tree | chmod/chown/chgroup | acl show/grant/revoke\n"
         << "  crash now/after/before/at/clear | sleep <毫秒> | fsck [--repair] | theme scope-dark|blue|mono | lang zh|en\n";
   } else {
     out << "ScopeFS commands\n"
@@ -2213,8 +2408,8 @@ CommandResult FileSystemKernel::cmdHelp() {
         << "  mkdir/rmdir/chdir/dir/create/open/read/write/close/delete/rm/truncate\n"
         << "  trace [n] | trace <command> | trace on/off/save <file>/replay <file>/step/clear\n"
         << "  scope [inode|block|journal|open|tree] | map [blocks|inode|journal|refcount|owner]\n"
-        << "  snapshot create/list/show/diff/rollback/delete | cp <src> <dst>\n"
-        << "  class create/grant/revoke/list/tree | chmod/chown/chclass | acl show/grant/revoke\n"
+        << "  snapshot | snapshot create/diff/rollback/delete | cp <src> <dst>\n"
+        << "  group create/delete/grant/revoke/list/tree | chmod/chown/chgroup | acl show/grant/revoke\n"
         << "  crash now/after/before/at/clear | sleep <ms> | fsck [--repair] | theme scope-dark|blue|mono | lang zh|en\n";
   }
   return ok(out.str());
@@ -2232,7 +2427,7 @@ std::string FileSystemKernel::renderDir(std::uint32_t inodeId, const std::string
       row.name = name;
       row.type = nodeMarker(n.type);
       row.owner = n.owner;
-      row.klass = n.klass;
+      row.group = n.group;
       row.mode = modeString(n.mode, n.type == NodeType::Directory);
       row.inode = n.id;
       row.generation = n.generation;
@@ -2263,7 +2458,7 @@ std::string FileSystemKernel::renderDir(std::uint32_t inodeId, const std::string
         << "\t" << plainTypeLabel(n.type, langName_)
         << "\t" << (zh ? "大小 " : "size ") << n.size << "B"
         << "\t" << n.owner
-        << "\t" << n.klass
+        << "\t" << n.group
         << "\t" << modeString(n.mode, n.type == NodeType::Directory)
         << "\t" << (zh ? "索引节点 " : "index node ") << n.id
         << "\t" << (zh ? "版本号 " : "version ") << n.generation
@@ -2302,7 +2497,7 @@ std::string FileSystemKernel::renderScope(const std::string& what) const {
         row.refcount = n.refcount;
         row.openCount = n.openCount;
         row.owner = n.owner;
-        row.klass = n.klass;
+        row.group = n.group;
         row.size = n.size;
         row.blockCount = n.blocks.size();
         row.pending = n.deletePending;
@@ -2321,7 +2516,7 @@ std::string FileSystemKernel::renderScope(const std::string& what) const {
       out << std::right << std::setw(10) << id << " " << std::left << std::setw(9) << plainTypeLabel(n.type, langName_)
           << std::right << std::setw(8) << n.generation << std::setw(17) << n.refcount
           << std::setw(12) << n.openCount << " " << std::left << std::setw(10) << n.owner
-          << std::setw(11) << n.klass << std::right << std::setw(6) << (std::to_string(n.size) + "B")
+          << std::setw(11) << n.group << std::right << std::setw(6) << (std::to_string(n.size) + "B")
           << std::setw(12) << n.blocks.size() << " " << boolText(n.deletePending) << "\n";
     }
     return out.str();
@@ -2374,7 +2569,7 @@ std::string FileSystemKernel::renderScope(const std::string& what) const {
         row.refcount = n.refcount;
         row.openCount = n.openCount;
         row.owner = n.owner;
-        row.klass = n.klass;
+        row.group = n.group;
         row.size = n.size;
         row.blockCount = n.blocks.size();
         row.pending = n.deletePending;
@@ -2384,7 +2579,7 @@ std::string FileSystemKernel::renderScope(const std::string& what) const {
     if (hot.size() > 6) hot.resize(6);
     return ui::renderScope(th, metrics, status(), hot,
                            {{"cwd", activeUser_.empty() ? "/" : session().cwd},
-                            {"classes", activeUser_.empty() ? "-" : joinSet(effectiveClasses(activeUser_, session().cwd), ',')},
+                            {"groups", activeUser_.empty() ? "-" : joinSet(effectiveGroups(activeUser_, session().cwd), ',')},
                             {"trace", trace_.enabled() ? "on" : "off"}});
   }
   out << "ScopeFS\n";

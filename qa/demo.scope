@@ -14,6 +14,7 @@ open /course/lab/report.copy append
 write 4  + COW branch
 close 4
 snapshot create after_copy
+snapshot
 snapshot diff baseline after_copy
 scope tree
 map refcount

@@ -62,7 +62,8 @@ std::string zh(const std::string& key) {
       {"trace_replay", "跟踪回放 / 只读"},
       {"trace_step", "跟踪单步"},
       {"snapshot_diff", "快照 diff"},
-      {"class_graph", "用户组图"},
+      {"snapshot_list", "快照"},
+      {"group_graph", "用户组图"},
       {"acl_graph", "ACL 图"},
       {"read_result", "读取结果"},
       {"offset", "偏移"},
@@ -112,7 +113,8 @@ std::string en(const std::string& key) {
       {"trace_replay", "Trace replay / read-only"},
       {"trace_step", "Trace step"},
       {"snapshot_diff", "Snapshot diff"},
-      {"class_graph", "Group graph"},
+      {"snapshot_list", "Snapshots"},
+      {"group_graph", "Group graph"},
       {"acl_graph", "ACL graph"},
       {"read_result", "Read result"},
       {"offset", "offset"},
@@ -150,21 +152,21 @@ std::vector<std::string> splitLines(const std::string& text) {
 std::string iconForType(const std::string& type) {
   if (type == "dir") return "◆";
   if (type == "snap") return "◈";
-  if (type == "class") return "◇";
+  if (type == "group") return "◇";
   return "▪";
 }
 
 std::string typeTone(const std::string& type) {
   if (type == "dir") return "amber";
   if (type == "snap") return "magenta";
-  if (type == "class") return "blue";
+  if (type == "group") return "blue";
   return "white";
 }
 
 std::string dirTypeLabel(const Theme& th, const std::string& type) {
   if (type == "dir") return th.lang == "zh" ? "目录" : "directory";
   if (type == "snap") return th.lang == "zh" ? "快照根" : "snapshot root";
-  if (type == "class") return th.lang == "zh" ? "用户组对象" : "class object";
+  if (type == "group") return th.lang == "zh" ? "用户组对象" : "group object";
   return th.lang == "zh" ? "文件" : "file";
 }
 
@@ -224,7 +226,7 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"inode.delete_pending", "标记延迟删除"},
       {"inode.chmod", "修改模式"},
       {"inode.chown", "修改属主"},
-      {"inode.chclass", "修改所属用户组"},
+      {"inode.chgroup", "修改所属用户组"},
       {"cow.break", "写时拷贝断开"},
       {"cow.path_root", "复制共享根"},
       {"cow.path_node", "复制共享路径"},
@@ -242,9 +244,10 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"snapshot.create", "创建快照"},
       {"snapshot.rollback", "回滚快照"},
       {"snapshot.delete", "删除快照"},
-      {"class.create", "创建用户组"},
-      {"class.grant", "授予用户组"},
-      {"class.revoke", "收回用户组"},
+      {"group.create", "创建用户组"},
+      {"group.delete", "删除用户组"},
+      {"group.grant", "授予用户组"},
+      {"group.revoke", "收回用户组"},
       {"acl.grant", "授予 ACL"},
       {"acl.revoke", "收回 ACL"},
       {"trace.on", "开启跟踪"},
@@ -302,7 +305,7 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"inode.delete_pending", "mark delete pending"},
       {"inode.chmod", "change mode"},
       {"inode.chown", "change owner"},
-      {"inode.chclass", "change group"},
+      {"inode.chgroup", "change group"},
       {"cow.break", "break COW sharing"},
       {"cow.path_root", "copy shared root"},
       {"cow.path_node", "copy shared path"},
@@ -320,9 +323,10 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"snapshot.create", "create snapshot"},
       {"snapshot.rollback", "rollback snapshot"},
       {"snapshot.delete", "delete snapshot"},
-      {"class.create", "create user group"},
-      {"class.grant", "grant user group"},
-      {"class.revoke", "revoke user group"},
+      {"group.create", "create user group"},
+      {"group.delete", "delete user group"},
+      {"group.grant", "grant user group"},
+      {"group.revoke", "revoke user group"},
       {"acl.grant", "grant ACL"},
       {"acl.revoke", "revoke ACL"},
       {"trace.on", "trace on"},
@@ -397,8 +401,8 @@ std::string eventTone(const TraceEvent& event) {
 
 bool traceOperationEvent(const TraceEvent& e) {
   return startsWithText(e.type, "file.") || startsWithText(e.type, "dir.") || startsWithText(e.type, "snapshot.") ||
-         startsWithText(e.type, "acl.") || startsWithText(e.type, "class.") || e.type == "open.fd" || e.type == "open.close" ||
-         e.type == "inode.chmod" || e.type == "inode.chown" || e.type == "inode.chclass";
+         startsWithText(e.type, "acl.") || startsWithText(e.type, "group.") || e.type == "open.fd" || e.type == "open.close" ||
+         e.type == "inode.chmod" || e.type == "inode.chown" || e.type == "inode.chgroup";
 }
 
 bool traceStorageEvent(const TraceEvent& e) {
@@ -427,7 +431,7 @@ std::string mapWhatLabel(const Theme& th, const std::string& what) {
 std::string extraLabel(const Theme& th, const std::string& key) {
   if (key == "cwd") return th.lang == "zh" ? "当前目录" : "current directory";
   if (key == "trace") return th.lang == "zh" ? "跟踪" : "trace";
-  if (key == "classes") return th.lang == "zh" ? "用户组" : "groups";
+  if (key == "groups") return th.lang == "zh" ? "用户组" : "groups";
   if (key == "view") return th.lang == "zh" ? "视图" : "view";
   if (key == "mode") return th.lang == "zh" ? "模式" : "mode";
   return key;
@@ -570,10 +574,6 @@ std::string indentBlock(const std::string& text, int spaces) {
   return out.str();
 }
 
-std::string rawFg(const std::string& code, const std::string& text) {
-  return code + text;
-}
-
 } // namespace
 
 TerminalMetrics detectMetrics() {
@@ -639,6 +639,17 @@ std::string text(const Theme& th, const std::string& key) {
   return th.lang == "en" ? en(key) : zh(key);
 }
 
+bool isWideCodepoint(std::uint32_t cp) {
+  return (cp >= 0x2E80 && cp <= 0xA4CF) ||
+         (cp >= 0xAC00 && cp <= 0xD7A3) ||
+         (cp >= 0xF900 && cp <= 0xFAFF) ||
+         (cp >= 0xFE10 && cp <= 0xFE19) ||
+         (cp >= 0xFE30 && cp <= 0xFE6F) ||
+         (cp >= 0xFF00 && cp <= 0xFF60) ||
+         (cp >= 0xFFE0 && cp <= 0xFFE6) ||
+         (cp >= 0x1F300 && cp <= 0x1FAFF);
+}
+
 int displayWidth(const std::string& text) {
   int width = 0;
   for (std::size_t i = 0; i < text.size();) {
@@ -667,9 +678,7 @@ int displayWidth(const std::string& text) {
              (static_cast<unsigned char>(text[i + 3]) & 0x3F);
         len = 4;
       }
-      const bool wide = (cp >= 0x2E80 && cp <= 0xA4CF) || (cp >= 0xAC00 && cp <= 0xD7A3) ||
-                        (cp >= 0xF900 && cp <= 0xFAFF) || (cp >= 0x1F300 && cp <= 0x1FAFF);
-      width += wide ? 2 : 1;
+      width += isWideCodepoint(cp) ? 2 : 1;
       i += len;
     }
   }
@@ -798,61 +807,62 @@ std::string columns(const std::vector<std::string>& boxed, int gap) {
 }
 
 std::string renderDashboard(const Theme& th, const TerminalMetrics& metrics, const KernelStatus& status) {
+  (void)status;
   const int width = std::min(metrics.columns, metrics.wide ? 132 : 112);
   const int left = std::max(0, (metrics.columns - width) / 2);
   const std::string indent(left, ' ');
   const std::vector<std::pair<std::string, std::string>> logoLarge = {
-      {"██████  ██████  ██████  ██████  ██████", "██████ ██████"},
-      {"██      ██      ██  ██  ██  ██  ██    ", "██     ██    "},
-      {"██████  ██      ██  ██  ██████  █████ ", "████   ██████"},
-      {"    ██  ██      ██  ██  ██      ██    ", "██         ██"},
-      {"██████  ██████  ██████  ██      ██████", "██     ██████"},
-      {"  ░░░░    ░░░░    ░░░░  ░░        ░░░░", "░░       ░░░░"}};
+      {"███████╗ ██████╗ ██████╗ ██████╗ ███████╗", "███████╗███████╗"},
+      {"██╔════╝██╔════╝██╔═══██╗██╔══██╗██╔════╝", "██╔════╝██╔════╝"},
+      {"███████╗██║     ██║   ██║██████╔╝█████╗  ", "█████╗  ███████╗"},
+      {"╚════██║██║     ██║   ██║██╔═══╝ ██╔══╝  ", "██╔══╝  ╚════██║"},
+      {"███████║╚██████╗╚██████╔╝██║     ███████╗", "██║     ███████║"},
+      {"╚══════╝ ╚═════╝ ╚═════╝ ╚═╝     ╚══════╝", "╚═╝     ╚══════╝"}
+  };
+  int scopeLogoWidth = 0;
+  int fsLogoWidth = 0;
+  for (const auto& [scope, fs] : logoLarge) {
+    scopeLogoWidth = std::max(scopeLogoWidth, displayWidth(scope));
+    fsLogoWidth = std::max(fsLogoWidth, displayWidth(fs));
+  }
+  const std::string logoGap = "  ";
+  const int logoWidth = scopeLogoWidth + displayWidth(logoGap) + fsLogoWidth;
   std::ostringstream out;
   if (th.ansi) out << th.bg;
   out << "\n";
-  if (metrics.compact) {
-    const auto scope = color(th, th.gray, "Scope");
-    const auto fs = color(th, th.white, "FS");
-    out << indent << center(scope + fs, width) << "\n";
-  } else {
-    for (const auto& [scope, fs] : logoLarge) {
-      const auto plain = scope + "  " + fs;
-      const int logoLeft = std::max(0, (width - displayWidth(plain)) / 2);
-      out << indent << std::string(logoLeft, ' ')
-          << color(th, scope.find("░") != std::string::npos ? th.dim : th.gray, scope)
-          << "  " << color(th, fs.find("░") != std::string::npos ? th.dim : th.white, fs) << "\n";
-    }
+  for (const auto& [scope, fs] : logoLarge) {
+    const int logoLeft = std::max(0, (width - logoWidth) / 2);
+    out << indent << std::string(logoLeft, ' ')
+        << color(th, th.gray, padRight(scope, scopeLogoWidth))
+        << logoGap << color(th, th.white, padRight(fs, fsLogoWidth)) << "\n";
   }
   out << "\n";
-  const int panelWidth = metrics.compact ? width : std::min(width - 8, 96);
+  const int panelWidth = metrics.compact ? width : std::min(width - 8, 104);
   const int panelLeft = std::max(0, (metrics.columns - panelWidth) / 2);
-  std::vector<std::string> command = {
-      rawFg(th.amber, "/scope") + rawFg(th.gray, "  " + text(th, "command_surface")) + th.reset,
-      rawFg(th.white, "$ ") + rawFg(th.gray, "format  ·  login root root  ·  scope tree  ·  map refcount") + th.reset,
-      rawFg(th.blue, "Build") + rawFg(th.white, "  " + text(th, "observable_kernel") + " ") +
-          rawFg(th.dim, text(th, "terminal_first")) + th.reset};
-  out << indentBlock(box(th, text(th, "command_focus"), command, panelWidth, "amber"), panelLeft) << "\n\n";
-  const int cardGap = 2;
-  const int cardWidth = metrics.compact ? width : (width - 2 * cardGap) / 3;
-  auto volume = box(th, text(th, "volume"), {
-      text(th, "mount") + "  " + color(th, status.mountState == "clean" ? th.green : th.amber, status.mountState),
-      color(th, th.white, txLabel(th, status.txid)),
-      text(th, "blocks") + " " + progress(th, status.blocks, status.blockTotal, std::max(10, cardWidth - 18), "blue")}, cardWidth, "border");
-  auto session = box(th, text(th, "session"), {
-      text(th, "user") + "   " + color(th, th.white, status.user),
-      text(th, "cwd") + "  " + color(th, th.gray, truncate(status.cwd, cardWidth - 12)),
-      text(th, "open") + "   " + color(th, th.white, std::to_string(status.openFiles))}, cardWidth, "blue");
-  auto obs = box(th, text(th, "observability"), {
-      text(th, "trace") + "  " + color(th, status.trace ? th.green : th.red, status.trace ? "on" : "off"),
-      text(th, "inode") + "  " + progress(th, status.inodes, status.inodeTotal, std::max(10, cardWidth - 18), "amber"),
-      text(th, "snap") + "   " + color(th, th.magenta, std::to_string(status.snapshots))}, cardWidth, "magenta");
-  if (metrics.compact) {
-    out << indentBlock(volume, left) << "\n" << indentBlock(session, left) << "\n" << indentBlock(obs, left) << "\n";
+  std::vector<std::string> project;
+  if (th.lang == "zh") {
+    project = {
+        color(th, th.amber, "东北大学操作系统课程设计 By 苏焜、刘瀚元、马冠哲、孙怡"),
+        color(th, th.white, "多用户、多级目录")
+        + color(th, th.gray, "文件系统内核，索引节点、目录项、数据块、日志事务和权限判定均可跟踪"),
+        color(th, th.gray, "以")
+        + color(th, th.white, "终端界面")
+        + color(th, th.gray, "作为文件系统过程的可视化画布，用于观察崩溃恢复、写时复制快照、块引用和权限状态转移"),
+        kBoxRule,
+        color(th, th.amber, "核心指令  ") + color(th, th.white, "open  read  write  close  create  mkdir  dir  delete"),
+        color(th, th.amber, "特色指令  ") + color(th, th.white, "trace  snapshot  map  scope  fsck  crash  cp  acl  group")};
   } else {
-    out << indentBlock(columns({volume, session, obs}, cardGap), left) << "\n";
+    project = {
+        color(th, th.amber, "Northeastern University Operating Systems Course Design By Su Kun, Liu Hanyuan, Ma Guanzhe, Sun Yi"),
+        color(th, th.white, "A multi-user, hierarchical") +
+            color(th, th.gray, " file-system kernel with replayable trace over inodes, entries, blocks, journal tx, and permissions"),
+        color(th, th.white, "The TUI") +
+            color(th, th.gray, " is a process canvas for crash recovery, COW snapshots, block refs, and authorization state changes"),
+        kBoxRule,
+        color(th, th.amber, "Core commands     ") + color(th, th.white, "open  read  write  close  create  mkdir  dir  delete"),
+        color(th, th.amber, "Feature commands  ") + color(th, th.white, "trace  snapshot  map  scope  fsck  crash  cp  acl  group")};
   }
-  out << indent << color(th, th.dim, text(th, "tips") + "  " + text(th, "tab_commands") + "   " + text(th, "palette") + "   trace 20   trace <command>   fsck") << "\n\n";
+  out << indentBlock(box(th, "", project, panelWidth, "amber"), panelLeft) << "\n\n";
   if (th.ansi) out << th.reset;
   return out.str();
 }
@@ -960,9 +970,9 @@ std::string renderDir(const Theme& th, const TerminalMetrics& metrics, const std
     const auto meta1 = padRight(labelValue(th, text(th, "inode"), std::to_string(row.inode), "amber"), group1Width);
     const auto meta2 = padRight(labelValue(th, text(th, "gen"), std::to_string(row.generation)), group2Width);
     const auto meta3 = labelValue(th, text(th, "ref"), std::to_string(row.refcount), row.shared ? "magenta" : "white");
-    const auto ownerClass = row.owner + ":" + row.klass;
+    const auto ownerGroup = row.owner + ":" + row.group;
     const auto blocks = progress(th, row.blockCount, 12, blockWidth, row.shared ? "magenta" : "blue");
-    const auto detail1 = padRight(labelValue(th, text(th, "owner_group"), ownerClass), group1Width);
+    const auto detail1 = padRight(labelValue(th, text(th, "owner_group"), ownerGroup), group1Width);
     const auto detail2 = padRight(labelValue(th, text(th, "size"), std::to_string(row.size) + "B"), group2Width);
     const auto detail3 = color(th, th.dim, text(th, "blocks") + " ") + blocks + " " + color(th, th.white, std::to_string(row.blockCount));
     const auto time1 = padRight(labelValue(th, text(th, "created"), row.createdAt.empty() ? "-" : row.createdAt), group1Width);
@@ -1008,7 +1018,7 @@ std::string renderScope(const Theme& th, const TerminalMetrics& metrics, const K
     hot.push_back(color(th, th.amber, "#" + std::to_string(row.inode)) + " " + padRight(row.type, 5) +
                   " " + labelValue(th, th.lang == "zh" ? "引用数" : "reference count", std::to_string(row.refcount), row.refcount > 1 ? "magenta" : "gray") +
                   "   " + labelValue(th, th.lang == "zh" ? "打开数" : "open count", std::to_string(row.openCount)) +
-                  " " + truncate(row.owner + ":" + row.klass, card - 44));
+                  " " + truncate(row.owner + ":" + row.group, card - 44));
   }
   if (hot.empty()) hot.push_back(color(th, th.dim, text(th, "no_inode_activity")));
   auto c = box(th, text(th, "hot_inodes"), hot, card, "magenta");
@@ -1288,14 +1298,61 @@ std::string renderSnapshotDiff(const Theme& th, const TerminalMetrics& metrics, 
   return box(th, text(th, "snapshot_diff"), lines, width, "magenta") + "\n";
 }
 
-std::string renderClassGraph(const Theme& th, const TerminalMetrics& metrics, const std::vector<std::string>& linesIn) {
+std::string renderSnapshotList(const Theme& th, const TerminalMetrics& metrics, const std::vector<SnapshotRow>& rows) {
+  const int width = std::min(metrics.columns, metrics.wide ? 132 : 112);
+  const bool narrow = width <= 96;
+  const int nameWidth = narrow ? 14 : (metrics.wide ? 22 : 18);
+  const int typeWidth = th.lang == "zh" ? 8 : 10;
+  const int group1Width = th.lang == "zh" ? 25 : 28;
+  const int group2Width = th.lang == "zh" ? 25 : 30;
+  const std::string columnGap = "  ";
+  const std::string groupGap = narrow ? "   " : "    ";
+  std::vector<std::string> list;
+  list.push_back(badge(th, std::to_string(rows.size()) + " " + text(th, "snap"), "magenta"));
+  if (rows.empty()) {
+    list.push_back(color(th, th.dim, th.lang == "zh" ? "暂无快照" : "no snapshots"));
+    return box(th, text(th, "snapshot_list"), list, width, "magenta") + "\n";
+  }
+  bool first = true;
+  for (const auto& row : rows) {
+    if (first) first = false;
+    else list.push_back(kBoxRule);
+    if (list.size() == 1) list.push_back(kBoxRule);
+
+    const auto nameCell = color(th, th.magenta, "◈ ") + accent(th, th.white, padRight(row.name, nameWidth));
+    const auto emptyName = padRight("", displayWidth("◈ ") + nameWidth);
+    const auto typeCell = color(th, th.white, padRight(th.lang == "zh" ? "快照" : "snapshot", typeWidth));
+    const auto emptyType = padRight("", typeWidth);
+    const auto rootLabel = th.lang == "zh" ? "根索引节点" : "root index node";
+    const auto summary1 = padRight(labelValue(th, rootLabel, std::to_string(row.rootInode), "amber"), group1Width);
+    const auto summary2 = padRight(labelValue(th, text(th, "gen"), std::to_string(row.generation)), group2Width);
+    const auto detail1 = padRight(labelValue(th, text(th, "tx"), "tx#" + std::to_string(row.txid), "blue"), group1Width);
+    const auto detail2 = padRight(labelValue(th, text(th, "created"), row.createdAt.empty() ? "-" : row.createdAt), group2Width);
+    const auto summaryLine = nameCell + columnGap + typeCell + groupGap + summary1 + groupGap + summary2;
+    const auto detailLine = emptyName + columnGap + emptyType + groupGap + detail1 + groupGap + detail2;
+    if (narrow || displayWidth(summaryLine) > width - 4 || displayWidth(detailLine) > width - 4) {
+      list.push_back(nameCell);
+      list.push_back(emptyName + columnGap + typeCell);
+      list.push_back(emptyName + columnGap + emptyType + groupGap + summary1);
+      list.push_back(emptyName + columnGap + emptyType + groupGap + summary2);
+      list.push_back(emptyName + columnGap + emptyType + groupGap + detail1);
+      list.push_back(emptyName + columnGap + emptyType + groupGap + detail2);
+    } else {
+      list.push_back(summaryLine);
+      list.push_back(detailLine);
+    }
+  }
+  return box(th, text(th, "snapshot_list"), list, width, "magenta") + "\n";
+}
+
+std::string renderGroupGraph(const Theme& th, const TerminalMetrics& metrics, const std::vector<std::string>& linesIn) {
   const int width = std::min(metrics.columns, metrics.wide ? 132 : 112);
   std::vector<std::string> lines;
   for (auto line : linesIn) {
     std::string tone = line.find("inherits") != std::string::npos ? "magenta" : "amber";
     lines.push_back(color(th, toneCode(th, tone), "◇ ") + truncate(line, width - 6));
   }
-  return box(th, text(th, "class_graph"), lines, width, "magenta") + "\n";
+  return box(th, text(th, "group_graph"), lines, width, "magenta") + "\n";
 }
 
 std::string renderAclGraph(const Theme& th, const TerminalMetrics& metrics, const std::string& title, const std::vector<std::string>& linesIn) {
