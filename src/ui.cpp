@@ -379,6 +379,7 @@ std::string statusTone(const std::string& status) {
   if (status == "ok" || status == "allow" || status == "redo") return "green";
   if (status == "wait" || status == "busy" || status == "need_format" || status == "issues") return "amber";
   if (status == "deny" || status == "error" || status == "crash") return "red";
+  if (status == "start") return "white";
   if (status == "ignored") return "gray";
   return "gray";
 }
