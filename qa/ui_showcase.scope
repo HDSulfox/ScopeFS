@@ -1,4 +1,4 @@
-format
+﻿format
 login root root
 scope
 mkdir /studio
@@ -10,7 +10,7 @@ read 3 16
 close 3
 dir /studio/assets
 snapshot create ui_base
-clone /studio/assets/manifest /studio/assets/manifest.copy
+cp /studio/assets/manifest /studio/assets/manifest.copy
 open /studio/assets/manifest.copy append
 write 4  + COW branch
 close 4
@@ -19,7 +19,7 @@ snapshot diff ui_base ui_after
 scope tree
 scope inode
 map refcount
-trace show 16
+trace 16
 acl grant /studio usr1 x path_prefix=/studio
 acl grant /studio/assets/manifest usr1 r path_prefix=/studio
 acl show /studio/assets/manifest
@@ -29,6 +29,6 @@ class tree
 theme blue
 scope
 theme mono
-trace show 5
+trace 5
 fsck
 exit

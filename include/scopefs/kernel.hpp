@@ -82,6 +82,7 @@ class FileSystemKernel {
     std::string name;
     std::string before;
     bool active = false;
+    TraceSink::Span span;
   };
 
   TraceSink trace_;
@@ -138,13 +139,13 @@ class FileSystemKernel {
   void retainBlock(std::uint32_t block);
   void releaseBlock(std::uint32_t block);
   std::string readFileData(const Inode& inode) const;
-  void setFileData(Inode& inode, const std::string& data, std::uint64_t txid);
-  void refreshDirBlock(Inode& inode, std::uint64_t txid);
+  void setFileData(Inode& inode, const std::string& data, std::uint64_t txid, bool touchModified = true);
+  void refreshDirBlock(Inode& inode, std::uint64_t txid, bool touchModified = true);
 
   ResolvedPath resolve(const std::string& path, bool mustExist);
   std::string canonicalize(const std::string& base, const std::string& path) const;
   bool ensureMutablePath(const std::string& targetPath, bool includeLeaf, std::uint64_t txid, ResolvedPath* updated);
-  std::uint32_t cloneInode(std::uint32_t src, std::uint64_t txid);
+  std::uint32_t cloneInode(std::uint32_t src, std::uint64_t txid, bool preserveTimes);
 
   bool authCheck(std::uint32_t inode, const std::string& right, const std::string& path, std::string* reason);
   bool canTraverse(const std::string& canonical, bool includeTarget, std::string* reason);
@@ -166,11 +167,11 @@ class FileSystemKernel {
   CommandResult cmdClose(const std::vector<std::string>& args);
   CommandResult cmdDelete(const std::vector<std::string>& args);
   CommandResult cmdTruncate(const std::vector<std::string>& args);
-  CommandResult cmdTrace(const std::vector<std::string>& args);
+  CommandResult cmdTrace(const std::vector<std::string>& args, const std::string& rawCommand);
   CommandResult cmdScope(const std::vector<std::string>& args);
   CommandResult cmdMap(const std::vector<std::string>& args);
   CommandResult cmdSnapshot(const std::vector<std::string>& args);
-  CommandResult cmdClone(const std::vector<std::string>& args);
+  CommandResult cmdCopy(const std::vector<std::string>& args);
   CommandResult cmdClass(const std::vector<std::string>& args);
   CommandResult cmdAcl(const std::vector<std::string>& args);
   CommandResult cmdChmod(const std::vector<std::string>& args);

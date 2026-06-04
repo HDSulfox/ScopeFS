@@ -62,6 +62,8 @@ struct Inode {
   std::uint32_t openCount = 0;
   std::uint32_t refcount = 1;
   bool deletePending = false;
+  std::string createdAt;
+  std::string modifiedAt;
   std::vector<std::uint32_t> blocks;
   std::map<std::string, DirEntry> entries;
   std::vector<AclEntry> acl;

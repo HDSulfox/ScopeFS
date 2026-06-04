@@ -152,7 +152,7 @@ VolumeCoordinator::ScopedLock VolumeCoordinator::acquireTxLock(const std::string
   const auto start = std::chrono::steady_clock::now();
   while (true) {
     {
-      auto mutex = acquireMutex();
+      auto mutex = acquireMutex(reason);
       std::size_t removed = 0;
       cleanupStaleLocksUnlocked(&removed);
       bool readersActive = false;
@@ -191,7 +191,7 @@ VolumeCoordinator::ScopedLock VolumeCoordinator::acquireReadLock(const std::stri
   const auto start = std::chrono::steady_clock::now();
   while (true) {
     {
-      auto mutex = acquireMutex();
+      auto mutex = acquireMutex(reason);
       std::size_t removed = 0;
       cleanupStaleLocksUnlocked(&removed);
       bool writerActive = false;
@@ -240,7 +240,7 @@ std::vector<LockRecord> VolumeCoordinator::listLocks(bool includeStale) const {
 }
 
 std::size_t VolumeCoordinator::clearStaleLocks() {
-  auto mutex = acquireMutex();
+  auto mutex = acquireMutex("clear stale locks");
   std::size_t removed = 0;
   cleanupStaleLocksUnlocked(&removed);
   trace_.emit(0, "coord.lock.clear_stale", "locks", "-", std::to_string(removed), "manual stale cleanup", "ok");
@@ -320,11 +320,12 @@ void VolumeCoordinator::ensureLayout() const {
   }
 }
 
-VolumeCoordinator::ScopedLock VolumeCoordinator::acquireMutex() const {
+VolumeCoordinator::ScopedLock VolumeCoordinator::acquireMutex(const std::string& reason) const {
   const auto timeoutMs = 5000;
   const auto start = std::chrono::steady_clock::now();
   while (true) {
     if (tryCreateDir(mutexDir())) {
+      trace_.emit(0, "coord.lock.acquire", "mutex", "-", sessionId_, reason, "ok");
       return ScopedLock(const_cast<VolumeCoordinator*>(this), mutexDir(), "mutex");
     }
     if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count() >= timeoutMs) {

@@ -73,6 +73,8 @@ struct DirRow {
   std::size_t blockCount = 0;
   std::uint32_t refcount = 0;
   bool shared = false;
+  std::string createdAt;
+  std::string modifiedAt;
 };
 
 struct InodeRow {

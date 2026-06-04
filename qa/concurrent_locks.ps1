@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 
 $exe = Join-Path $PSScriptRoot "..\build\scopefs.exe"
 if (!(Test-Path $exe)) {
@@ -220,7 +220,7 @@ if ($crasher -notmatch "E_CRASH" -or $victimOut -notmatch "E_CRASH") {
 $recovered = Run-ScopeText @"
 login root root
 fsck
-trace show 80
+trace 80
 exit
 "@
 if ($recovered -notmatch "fsck: clean") { throw "recovery after broadcast crash failed" }

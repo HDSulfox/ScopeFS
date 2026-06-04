@@ -20,6 +20,7 @@ namespace scopefs::ui {
 namespace {
 
 std::string esc(const std::string& code) { return "\x1b[" + code + "m"; }
+const std::string kBoxRule = "\x1fscopefs.box.rule";
 
 std::string zh(const std::string& key) {
   static const std::map<std::string, std::string> dict = {
@@ -31,13 +32,13 @@ std::string zh(const std::string& key) {
       {"session", "会话"},
       {"observability", "观测"},
       {"mount", "挂载"},
-      {"blocks", "块"},
+      {"blocks", "数据块"},
       {"inode", "索引节点"},
       {"journal", "日志"},
       {"tx", "事务"},
       {"cwd", "当前目录"},
       {"user", "用户"},
-      {"open", "打开"},
+      {"open", "打开文件数"},
       {"trace", "跟踪"},
       {"snap", "快照"},
       {"tips", "提示"},
@@ -45,9 +46,12 @@ std::string zh(const std::string& key) {
       {"palette", "命令面板"},
       {"directory", "目录"},
       {"entries", "项"},
-      {"gen", "gen"},
-      {"ref", "ref"},
+      {"gen", "版本号"},
+      {"ref", "引用计数"},
+      {"owner_group", "归属"},
       {"size", "大小"},
+      {"created", "创建时间"},
+      {"modified", "修改时间"},
       {"kernel", "内核"},
       {"capacity", "容量"},
       {"hot_inodes", "热点索引节点"},
@@ -78,23 +82,26 @@ std::string en(const std::string& key) {
       {"session", "Session"},
       {"observability", "Observability"},
       {"mount", "mount"},
-      {"blocks", "blocks"},
+      {"blocks", "data blocks"},
       {"inode", "index node"},
       {"journal", "journal"},
       {"tx", "transaction"},
       {"cwd", "current directory"},
       {"user", "user"},
-      {"open", "open"},
+      {"open", "open files"},
       {"trace", "trace"},
-      {"snap", "snap"},
+      {"snap", "snapshots"},
       {"tips", "tips"},
       {"tab_commands", "tab commands"},
       {"palette", "ctrl+p palette"},
       {"directory", "Directory"},
       {"entries", "entries"},
-      {"gen", "gen"},
-      {"ref", "ref"},
+      {"gen", "version"},
+      {"ref", "reference count"},
+      {"owner_group", "ownership"},
       {"size", "size"},
+      {"created", "created time"},
+      {"modified", "modified time"},
       {"kernel", "Kernel"},
       {"capacity", "Capacity"},
       {"hot_inodes", "Hot index nodes"},
@@ -154,23 +161,25 @@ std::string typeTone(const std::string& type) {
   return "white";
 }
 
-std::string eventTone(const TraceEvent& event) {
-  if (event.status == "deny" || event.status == "error" || event.status == "crash") return "red";
-  if (event.type.find("commit") != std::string::npos || event.type.find("fsck") != std::string::npos) return "green";
-  if (event.type.find("snapshot") != std::string::npos || event.type.find("cow") != std::string::npos) return "magenta";
-  if (event.type.find("path") != std::string::npos || event.type.find("trace") != std::string::npos || event.type.find("read") != std::string::npos) return "blue";
-  if (event.type.find("journal") != std::string::npos || event.type.find("block") != std::string::npos) return "amber";
-  return "gray";
+std::string dirTypeLabel(const Theme& th, const std::string& type) {
+  if (type == "dir") return th.lang == "zh" ? "目录" : "directory";
+  if (type == "snap") return th.lang == "zh" ? "快照根" : "snapshot root";
+  if (type == "class") return th.lang == "zh" ? "用户组对象" : "class object";
+  return th.lang == "zh" ? "文件" : "file";
+}
+
+std::string labelValue(const Theme& th, const std::string& label, const std::string& value, const std::string& tone = "white") {
+  return color(th, th.dim, label + " ") + accent(th, toneCode(th, tone), value);
 }
 
 std::string traceTypeLabel(const Theme& th, const std::string& type) {
   static const std::map<std::string, std::string> zhMap = {
       {"coord.session.start", "会话启动"},
       {"coord.session.stop", "会话结束"},
-      {"coord.lock.acquire", "获取协调锁"},
-      {"coord.lock.release", "释放协调锁"},
-      {"coord.lock.wait", "等待协调锁"},
-      {"coord.lock.deny", "协调锁忙"},
+      {"coord.lock.acquire", "获取锁"},
+      {"coord.lock.release", "释放锁"},
+      {"coord.lock.wait", "等待锁"},
+      {"coord.lock.deny", "锁忙"},
       {"coord.lock.clear_stale", "清理陈旧锁"},
       {"coord.epoch.bump", "卷版本递增"},
       {"coord.epoch.reload", "重载卷状态"},
@@ -196,8 +205,8 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"recovery.redo", "恢复重放"},
       {"recovery.ignore", "忽略未提交事务"},
       {"recovery.end", "恢复完成"},
-      {"fsck.light", "轻量 fsck"},
-      {"fsck.full", "完整 fsck"},
+      {"fsck.light", "轻量文件系统检查"},
+      {"fsck.full", "完整文件系统检查"},
       {"crash.point", "崩溃注入点"},
       {"crash.inject", "触发崩溃"},
       {"path.lookup", "路径解析"},
@@ -206,7 +215,7 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"inode.retain", "保留索引节点引用"},
       {"inode.release", "释放索引节点引用"},
       {"inode.free", "回收索引节点"},
-      {"inode.clone", "克隆索引节点"},
+      {"inode.clone", "复制索引节点"},
       {"inode.write_map", "更新块映射"},
       {"inode.lock.acquire", "获取索引节点锁"},
       {"inode.lock.release", "释放索引节点锁"},
@@ -227,7 +236,7 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"file.read", "读取文件"},
       {"file.write", "写入文件"},
       {"file.delete", "删除文件"},
-      {"file.clone", "克隆文件"},
+      {"file.clone", "复制文件"},
       {"dir.mkdir", "创建目录"},
       {"dir.rmdir", "删除目录"},
       {"snapshot.create", "创建快照"},
@@ -245,10 +254,10 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
   static const std::map<std::string, std::string> enMap = {
       {"coord.session.start", "session start"},
       {"coord.session.stop", "session stop"},
-      {"coord.lock.acquire", "acquire coord lock"},
-      {"coord.lock.release", "release coord lock"},
-      {"coord.lock.wait", "wait coord lock"},
-      {"coord.lock.deny", "coord lock busy"},
+      {"coord.lock.acquire", "acquire lock"},
+      {"coord.lock.release", "release lock"},
+      {"coord.lock.wait", "wait lock"},
+      {"coord.lock.deny", "lock busy"},
       {"coord.lock.clear_stale", "clear stale locks"},
       {"coord.epoch.bump", "bump volume epoch"},
       {"coord.epoch.reload", "reload volume state"},
@@ -274,8 +283,8 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"recovery.redo", "recovery redo"},
       {"recovery.ignore", "ignore uncommitted transaction"},
       {"recovery.end", "recovery complete"},
-      {"fsck.light", "light fsck"},
-      {"fsck.full", "full fsck"},
+      {"fsck.light", "light file-system check"},
+      {"fsck.full", "full file-system check"},
       {"crash.point", "crash point"},
       {"crash.inject", "trigger crash"},
       {"path.lookup", "path lookup"},
@@ -284,7 +293,7 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"inode.retain", "retain index-node ref"},
       {"inode.release", "release index-node ref"},
       {"inode.free", "free index node"},
-      {"inode.clone", "clone index node"},
+      {"inode.clone", "copy index node"},
       {"inode.write_map", "update block map"},
       {"inode.lock.acquire", "acquire index-node lock"},
       {"inode.lock.release", "release index-node lock"},
@@ -305,7 +314,7 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"file.read", "read file"},
       {"file.write", "write file"},
       {"file.delete", "delete file"},
-      {"file.clone", "clone file"},
+      {"file.clone", "copy file"},
       {"dir.mkdir", "make directory"},
       {"dir.rmdir", "remove directory"},
       {"snapshot.create", "create snapshot"},
@@ -331,8 +340,8 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
 
 std::string traceObjectLabel(const Theme& th, const std::string& object) {
   static const std::map<std::string, std::string> zhMap = {
-      {"tx", "事务锁"},
-      {"read", "读锁"},
+      {"tx", "卷级独占写"},
+      {"read", "卷级共享读"},
       {"mutex", "协调互斥"},
       {"signal", "崩溃信号"},
       {"volume", "虚拟卷"},
@@ -344,8 +353,8 @@ std::string traceObjectLabel(const Theme& th, const std::string& object) {
       {"ring", "跟踪缓冲区"},
       {"before.command.dispatch", "命令分发前"}};
   static const std::map<std::string, std::string> enMap = {
-      {"tx", "transaction lock"},
-      {"read", "read lock"},
+      {"tx", "volume-exclusive write"},
+      {"read", "volume-shared read"},
       {"mutex", "coord mutex"},
       {"signal", "crash signal"},
       {"volume", "virtual volume"},
@@ -360,6 +369,46 @@ std::string traceObjectLabel(const Theme& th, const std::string& object) {
   const auto it = map.find(object);
   if (it != map.end()) return it->second;
   return object;
+}
+
+std::string statusTone(const std::string& status) {
+  if (status == "ok" || status == "allow" || status == "redo") return "green";
+  if (status == "wait" || status == "busy" || status == "need_format" || status == "issues") return "amber";
+  if (status == "deny" || status == "error" || status == "crash") return "red";
+  if (status == "ignored") return "gray";
+  return "gray";
+}
+
+bool startsWithText(const std::string& text, const std::string& prefix) {
+  return text.rfind(prefix, 0) == 0;
+}
+
+std::string eventTone(const TraceEvent& event) {
+  if (event.status == "deny" || event.status == "error" || event.status == "crash" || event.status == "busy") return "red";
+  if (event.type.find("commit") != std::string::npos || event.type.find("checkpoint") != std::string::npos ||
+      event.type.find("fsck") != std::string::npos) {
+    return "green";
+  }
+  if (startsWithText(event.type, "snapshot.") || startsWithText(event.type, "cow.")) return "magenta";
+  if (startsWithText(event.type, "path.") || event.type == "auth.check" || startsWithText(event.type, "coord.lock.")) return "blue";
+  if (startsWithText(event.type, "journal.") || startsWithText(event.type, "block.")) return "amber";
+  return "gray";
+}
+
+bool traceOperationEvent(const TraceEvent& e) {
+  return startsWithText(e.type, "file.") || startsWithText(e.type, "dir.") || startsWithText(e.type, "snapshot.") ||
+         startsWithText(e.type, "acl.") || startsWithText(e.type, "class.") || e.type == "open.fd" || e.type == "open.close" ||
+         e.type == "inode.chmod" || e.type == "inode.chown" || e.type == "inode.chclass";
+}
+
+bool traceStorageEvent(const TraceEvent& e) {
+  return startsWithText(e.type, "inode.") || startsWithText(e.type, "block.");
+}
+
+bool pathChildOf(const std::string& parent, const std::string& child) {
+  if (parent.empty() || child.empty() || parent == child || child == "/") return false;
+  if (parent == "/") return startsWithText(child, "/") && child.size() > 1;
+  return startsWithText(child, parent + "/");
 }
 
 std::string txLabel(const Theme& th, std::uint64_t txid) {
@@ -497,8 +546,8 @@ std::string mapLegend(const Theme& th, const std::string& what) {
   }
   return color(th, th.dim, th.lang == "zh" ? "图例 " : "legend ") +
          color(th, th.gray, th.lang == "zh" ? ". 空闲 " : ". free ") +
-         color(th, th.white, th.lang == "zh" ? "░ 已分配 " : "░ allocated ") +
-         color(th, th.magenta, th.lang == "zh" ? "▒/█ 共享" : "▒/█ shared");
+         color(th, th.white, th.lang == "zh" ? "░ 引用计数 1 " : "░ reference count 1 ") +
+         color(th, th.magenta, th.lang == "zh" ? "▒/█ 共享引用" : "▒/█ shared references");
 }
 
 std::string repeatText(const std::string& text, int count) {
@@ -716,6 +765,10 @@ std::string box(const Theme& th, const std::string& title, const std::vector<std
   const int titleWidth = displayWidth(titleText);
   out << color(th, border, "╭" + titleText + repeatText("─", std::max(0, width - 2 - titleWidth)) + "╮") << "\n";
   for (const auto& line : lines) {
+    if (line == kBoxRule) {
+      out << color(th, border, "├" + repeatText("─", width - 2) + "┤") << "\n";
+      continue;
+    }
     out << color(th, border, "│ ") << padRight(line, inner) << color(th, border, " │") << "\n";
   }
   out << color(th, border, "╰" + repeatText("─", width - 2) + "╯");
@@ -799,7 +852,7 @@ std::string renderDashboard(const Theme& th, const TerminalMetrics& metrics, con
   } else {
     out << indentBlock(columns({volume, session, obs}, cardGap), left) << "\n";
   }
-  out << indent << color(th, th.dim, text(th, "tips") + "  " + text(th, "tab_commands") + "   " + text(th, "palette") + "   trace show   snapshot diff   fsck") << "\n\n";
+  out << indent << color(th, th.dim, text(th, "tips") + "  " + text(th, "tab_commands") + "   " + text(th, "palette") + "   trace 20   trace <command>   fsck") << "\n\n";
   if (th.ansi) out << th.reset;
   return out.str();
 }
@@ -881,29 +934,59 @@ std::string renderResult(const Theme& th, const TerminalMetrics& metrics, const 
 
 std::string renderDir(const Theme& th, const TerminalMetrics& metrics, const std::string& path, const std::vector<DirRow>& rows) {
   const int width = std::min(metrics.columns, metrics.wide ? 132 : 112);
-  const int nameWidth = metrics.compact ? 10 : (metrics.wide ? 16 : 12);
-  const int typeWidth = 7;
-  const int ownerWidth = metrics.compact ? 14 : 18;
-  const int sizeWidth = 6;
-  const int blockWidth = metrics.compact ? 8 : 12;
-  const std::string detailIndent(3, ' ');
+  const bool narrow = width <= 96;
+  const int nameWidth = narrow ? 10 : (metrics.wide ? 14 : 12);
+  const int typeWidth = th.lang == "zh" ? 10 : 13;
+  const int group1Width = th.lang == "zh" ? 25 : 29;
+  const int group2Width = th.lang == "zh" ? 25 : 30;
+  const int blockWidth = narrow ? 6 : (metrics.wide ? 12 : 10);
+  const std::string groupGap = narrow ? "   " : "    ";
+  const int nameCellWidth = nameWidth + 2;
   std::vector<std::string> list;
   list.push_back(accent(th, th.amber, truncate(path, width - 16)) + "  " + badge(th, std::to_string(rows.size()) + " " + text(th, "entries"), "blue"));
+  bool firstRow = true;
   for (const auto& row : rows) {
+    if (firstRow) firstRow = false;
+    else list.push_back(kBoxRule);
+    if (rows.size() > 0 && list.size() == 1) list.push_back(kBoxRule);
     const auto tone = typeTone(row.type);
     const auto nameTone = row.type == "dir" ? th.amber : (row.shared ? th.magenta : th.white);
-    const auto nameCell = accent(th, nameTone, padRight(row.name, nameWidth));
-    const auto typeCell = color(th, th.white, padRight(row.type, typeWidth));
-    const auto meta = color(th, th.dim, text(th, "inode") + " ") + accent(th, th.amber, padLeft(std::to_string(row.inode), 4)) +
-                      color(th, th.dim, "   " + text(th, "gen") + " ") + color(th, th.white, padLeft(std::to_string(row.generation), 3)) +
-                      color(th, th.dim, "   " + text(th, "ref") + " ") + color(th, row.shared ? th.magenta : th.white, padLeft(std::to_string(row.refcount), 2));
+    const auto nameCell = color(th, toneCode(th, tone), iconForType(row.type)) + " " +
+                          accent(th, nameTone, padRight(row.name, nameWidth));
+    const auto typeCell = color(th, th.white, padRight(dirTypeLabel(th, row.type), typeWidth));
+    const auto emptyName = padRight("", nameCellWidth);
+    const auto columnGap = "  ";
+    const auto emptyType = padRight("", typeWidth);
+    const auto meta1 = padRight(labelValue(th, text(th, "inode"), std::to_string(row.inode), "amber"), group1Width);
+    const auto meta2 = padRight(labelValue(th, text(th, "gen"), std::to_string(row.generation)), group2Width);
+    const auto meta3 = labelValue(th, text(th, "ref"), std::to_string(row.refcount), row.shared ? "magenta" : "white");
     const auto ownerClass = row.owner + ":" + row.klass;
     const auto blocks = progress(th, row.blockCount, 12, blockWidth, row.shared ? "magenta" : "blue");
-    list.push_back(color(th, toneCode(th, tone), iconForType(row.type)) + " " + nameCell + "  " + typeCell + "  " + meta);
-    list.push_back(detailIndent + color(th, th.white, padRight(row.mode, 10)) + "  " +
-                   color(th, th.white, padRight(ownerClass, ownerWidth)) + "  " +
-                   color(th, th.dim, text(th, "size") + " ") + accent(th, th.white, padLeft(std::to_string(row.size), sizeWidth)) +
-                   "  " + color(th, th.dim, text(th, "blocks") + " ") + blocks);
+    const auto detail1 = padRight(labelValue(th, text(th, "owner_group"), ownerClass), group1Width);
+    const auto detail2 = padRight(labelValue(th, text(th, "size"), std::to_string(row.size) + "B"), group2Width);
+    const auto detail3 = color(th, th.dim, text(th, "blocks") + " ") + blocks + " " + color(th, th.white, std::to_string(row.blockCount));
+    const auto time1 = padRight(labelValue(th, text(th, "created"), row.createdAt.empty() ? "-" : row.createdAt), group1Width);
+    const auto time2 = padRight(labelValue(th, text(th, "modified"), row.modifiedAt.empty() ? "-" : row.modifiedAt), group2Width);
+    const auto summaryLine = nameCell + columnGap + typeCell + groupGap + meta1 + groupGap + meta2 + groupGap + meta3;
+    const auto detailLine = emptyName + columnGap + color(th, th.white, padRight(row.mode, typeWidth)) + groupGap + detail1 + groupGap + detail2 + groupGap + detail3;
+    if (narrow || displayWidth(summaryLine) > width - 4 || displayWidth(detailLine) > width - 4) {
+      list.push_back(nameCell + columnGap + typeCell + groupGap + meta1);
+      list.push_back(emptyName + columnGap + color(th, th.white, padRight(row.mode, typeWidth)) + groupGap + detail1);
+      list.push_back(emptyName + columnGap + emptyType + groupGap + meta2 + groupGap + meta3);
+      list.push_back(emptyName + columnGap + emptyType + groupGap + detail2 + groupGap + detail3);
+      list.push_back(emptyName + columnGap + emptyType + groupGap + labelValue(th, text(th, "created"), row.createdAt.empty() ? "-" : row.createdAt));
+      list.push_back(emptyName + columnGap + emptyType + groupGap + labelValue(th, text(th, "modified"), row.modifiedAt.empty() ? "-" : row.modifiedAt));
+    } else {
+      list.push_back(summaryLine);
+      list.push_back(detailLine);
+      const auto timeLine = emptyName + columnGap + emptyType + groupGap + time1 + groupGap + time2;
+      if (displayWidth(timeLine) <= width - 4) {
+        list.push_back(timeLine);
+      } else {
+        list.push_back(emptyName + columnGap + emptyType + groupGap + time1);
+        list.push_back(emptyName + columnGap + emptyType + groupGap + time2);
+      }
+    }
   }
   return box(th, text(th, "directory"), list, width, "amber") + "\n";
 }
@@ -923,8 +1006,9 @@ std::string renderScope(const Theme& th, const TerminalMetrics& metrics, const K
   std::vector<std::string> hot;
   for (const auto& row : inodeHot) {
     hot.push_back(color(th, th.amber, "#" + std::to_string(row.inode)) + " " + padRight(row.type, 5) +
-                  " ref=" + color(th, row.refcount > 1 ? th.magenta : th.gray, std::to_string(row.refcount)) +
-                  " open=" + std::to_string(row.openCount) + " " + truncate(row.owner + ":" + row.klass, card - 34));
+                  " " + labelValue(th, th.lang == "zh" ? "引用计数" : "reference count", std::to_string(row.refcount), row.refcount > 1 ? "magenta" : "gray") +
+                  "   " + labelValue(th, th.lang == "zh" ? "打开数" : "open count", std::to_string(row.openCount)) +
+                  " " + truncate(row.owner + ":" + row.klass, card - 44));
   }
   if (hot.empty()) hot.push_back(color(th, th.dim, text(th, "no_inode_activity")));
   auto c = box(th, text(th, "hot_inodes"), hot, card, "magenta");
@@ -999,21 +1083,165 @@ std::string renderMap(const Theme& th, const TerminalMetrics& metrics, const std
 std::string renderTraceTimeline(const Theme& th, const TerminalMetrics& metrics, const std::vector<TraceEvent>& events, const std::string& title) {
   const int width = std::min(metrics.columns, metrics.wide ? 132 : 112);
   std::vector<std::string> lines;
-  for (std::size_t i = 0; i < events.size(); ++i) {
-    const auto& e = events[i];
-    const auto tone = eventTone(e);
-    const bool isPath = e.type.find("path.lookup") != std::string::npos;
-    const bool nextIsPath = i + 1 < events.size() && events[i + 1].type.find("path.lookup") != std::string::npos;
-    std::string branch = isPath ? (nextIsPath ? "  ├─" : "  └─") : "●";
-    if (e.type.find("journal") != std::string::npos) branch = "◆";
-    if (e.status == "deny" || e.status == "crash") branch = "×";
+  if (!events.empty()) {
+    const auto command = events.front().command;
+    const bool singleCommand = std::all_of(events.begin(), events.end(), [&](const TraceEvent& e) {
+      return e.command == command;
+    });
+    if (singleCommand && !command.empty() && command != "-") {
+      lines.push_back(color(th, th.dim, th.lang == "zh" ? "命令 " : "command ") +
+                      color(th, th.white, truncate(command, width - 12)));
+      lines.push_back(kBoxRule);
+    }
+  }
+
+  struct TraceNode {
+    const TraceEvent* event = nullptr;
+    int depth = 0;
+  };
+  struct LockFrame {
+    std::string object;
+    int depth = 0;
+  };
+  struct PathFrame {
+    std::string path;
+    int depth = 0;
+  };
+
+  std::vector<TraceNode> nodes;
+  const bool structuredTrace = std::any_of(events.begin(), events.end(), [](const TraceEvent& e) {
+    return e.parentSeq != 0 || e.depth != 0;
+  });
+
+  if (structuredTrace) {
+    std::map<std::uint64_t, int> displayDepth;
+    for (const auto& e : events) {
+      int depth = 0;
+      const auto parent = displayDepth.find(e.parentSeq);
+      if (e.parentSeq != 0 && parent != displayDepth.end()) depth = parent->second + 1;
+      displayDepth[e.seq] = depth;
+      nodes.push_back({&e, depth});
+    }
+  } else {
+    std::vector<LockFrame> locks;
+    std::vector<PathFrame> paths;
+    std::uint64_t activeTxid = 0;
+    int activeTxDepth = -1;
+    int activeAuthDepth = -1;
+    int activeCowDepth = -1;
+    int activeCheckpointDepth = -1;
+
+    auto childOfActiveTx = [&]() {
+      return activeTxid == 0 ? 0 : activeTxDepth + 1;
+    };
+
+    for (const auto& e : events) {
+      int depth = 0;
+
+      if (activeTxid != 0 && !startsWithText(e.type, "coord.lock.")) {
+        depth = std::max(depth, childOfActiveTx());
+      }
+      if (activeCheckpointDepth >= 0 && (e.type == "journal.clear" || e.type == "coord.epoch.bump")) {
+        depth = std::max(depth, activeCheckpointDepth + 1);
+      }
+
+      if (e.type == "coord.lock.acquire") {
+        depth = locks.empty() ? 0 : locks.back().depth + 1;
+        if (e.object == "mutex") locks.push_back({e.object, depth});
+        paths.clear();
+        activeAuthDepth = -1;
+      } else if (e.type == "coord.lock.release") {
+        if (e.object == "mutex") {
+          for (std::size_t idx = locks.size(); idx > 0; --idx) {
+            if (locks[idx - 1].object == e.object) {
+              depth = locks[idx - 1].depth + 1;
+              locks.erase(locks.begin() + static_cast<std::ptrdiff_t>(idx - 1));
+              break;
+            }
+          }
+        }
+        if (e.object == "tx") {
+          activeTxid = 0;
+          activeTxDepth = -1;
+          activeCowDepth = -1;
+          activeCheckpointDepth = -1;
+        }
+      } else if (e.type == "journal.begin" && e.txid != 0) {
+        activeTxid = e.txid;
+        activeTxDepth = depth;
+        activeCowDepth = -1;
+        activeCheckpointDepth = -1;
+        paths.clear();
+        activeAuthDepth = -1;
+      } else if (e.type == "journal.checkpoint" && e.txid == activeTxid) {
+        activeCheckpointDepth = depth;
+        activeCowDepth = -1;
+      } else if (e.type == "path.lookup") {
+        const int baseDepth = depth;
+        while (!paths.empty() && !pathChildOf(paths.back().path, e.object)) paths.pop_back();
+        if (!paths.empty()) depth = std::max(depth, paths.back().depth + 1);
+        else depth = baseDepth;
+        paths.push_back({e.object, depth});
+        activeAuthDepth = -1;
+        activeCowDepth = -1;
+      } else if (e.type == "auth.check") {
+        for (auto it = paths.rbegin(); it != paths.rend(); ++it) {
+          if (it->path == e.object || pathChildOf(it->path, e.object)) {
+            depth = std::max(depth, it->depth + 1);
+            break;
+          }
+        }
+        activeAuthDepth = depth;
+      } else if (startsWithText(e.type, "cow.")) {
+        if (activeTxid != 0 && e.txid == activeTxid) depth = std::max(depth, activeTxDepth + 1);
+        activeCowDepth = depth;
+      } else if (traceStorageEvent(e)) {
+        if (activeCowDepth >= 0 && (activeTxid == 0 || e.txid == 0 || e.txid == activeTxid)) {
+          depth = std::max(depth, activeCowDepth + 1);
+        }
+      } else if (traceOperationEvent(e)) {
+        if (activeTxid == 0 && activeAuthDepth >= 0) depth = std::max(depth, activeAuthDepth + 1);
+        activeCowDepth = -1;
+      } else if (e.type == "journal.commit") {
+        activeCowDepth = -1;
+      }
+
+      nodes.push_back({&e, depth});
+    }
+  }
+
+  for (std::size_t i = 0; i < nodes.size(); ++i) {
+    const auto& e = *nodes[i].event;
+    const int depth = nodes[i].depth;
+    const bool failed = e.status == "deny" || e.status == "error" || e.status == "crash" || e.status == "busy";
+    const auto tone = failed ? std::string("red") : eventTone(e);
+    auto hasLaterAtDepth = [&](int targetDepth) {
+      for (std::size_t j = i + 1; j < nodes.size(); ++j) {
+        if (nodes[j].depth < targetDepth) break;
+        if (nodes[j].depth == targetDepth) return true;
+      }
+      return false;
+    };
+    std::string branchPrefix;
+    const auto marker = std::string("●");
+    if (depth == 0) {
+      branchPrefix.clear();
+    } else {
+      for (int d = 1; d < depth; ++d) branchPrefix += hasLaterAtDepth(d) ? "│ " : "  ";
+      branchPrefix += hasLaterAtDepth(depth) ? "├─" : "└─";
+    }
+
+    const auto tx = e.txid > 0 ? color(th, th.amber, txLabel(th, e.txid)) + " " : "";
+    const auto object = (!e.object.empty() && e.object != "-") ? traceObjectLabel(th, e.object) : "";
+    const auto objectPart = object.empty() ? "" : color(th, th.gray, truncate(object, std::max(8, width - 62)));
     std::ostringstream line;
-    line << color(th, toneCode(th, tone), branch) << " "
+    line << color(th, th.dim, branchPrefix)
+         << color(th, toneCode(th, tone), marker) << " "
          << color(th, th.dim, "#" + std::to_string(e.seq)) << " "
-         << color(th, th.amber, txLabel(th, e.txid)) << " "
-         << color(th, th.white, truncate(traceTypeLabel(th, e.type), 24)) << " "
-         << color(th, th.gray, truncate(traceObjectLabel(th, e.object), width - 58)) << " "
-         << badge(th, e.status, tone);
+         << tx
+         << color(th, th.white, truncate(traceTypeLabel(th, e.type), 24));
+    if (!objectPart.empty()) line << " " << objectPart;
+    line << " " << badge(th, e.status, statusTone(e.status));
     lines.push_back(line.str());
   }
   if (lines.empty()) lines.push_back(color(th, th.dim, th.lang == "zh" ? "暂无跟踪事件" : "no trace events"));
@@ -1021,6 +1249,7 @@ std::string renderTraceTimeline(const Theme& th, const TerminalMetrics& metrics,
   if (title == "Trace timeline") translatedTitle = text(th, "trace_timeline");
   else if (title == "Trace replay / read-only") translatedTitle = text(th, "trace_replay");
   else if (title == "Trace step") translatedTitle = text(th, "trace_step");
+  else if (!title.empty()) translatedTitle = text(th, "trace_timeline") + " / " + truncate(title, 40);
   return box(th, translatedTitle, lines, width, "blue") + "\n";
 }
 

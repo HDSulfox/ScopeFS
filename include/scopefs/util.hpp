@@ -23,6 +23,7 @@ std::set<std::string> splitSet(const std::string& text, char delim);
 std::string lower(std::string text);
 bool startsWith(const std::string& text, const std::string& prefix);
 std::string trim(const std::string& text);
+std::vector<std::string> tokenize(const std::string& line);
 std::string modeString(int mode, bool directory);
 int parseMode(const std::string& text, int fallback);
 std::string rightsNormalize(const std::string& rights);

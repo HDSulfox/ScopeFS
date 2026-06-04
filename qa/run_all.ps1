@@ -30,8 +30,27 @@ function Run-ScopeScript($name, [int[]]$AllowedExit = @(0)) {
   return $output
 }
 
-Run-ScopeScript "demo.scope" | Out-Null
+$demo = Run-ScopeScript "demo.scope"
+if ($demo -match "E_") {
+  throw "demo.scope emitted an unexpected error"
+}
+if ($demo -notmatch "/course/lab/report -> /course/lab/report\.copy") {
+  throw "demo.scope did not exercise cp successfully"
+}
+if ($demo -notmatch "\+ /course/lab/report\.copy") {
+  throw "demo.scope snapshot diff did not include copied report"
+}
 Run-ScopeScript "permissions.scope" | Out-Null
+
+powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "cp_cow.ps1")
+if ($LASTEXITCODE -ne 0) {
+  throw "cp_cow.ps1 failed with exit code $LASTEXITCODE"
+}
+
+powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "time_attrs.ps1")
+if ($LASTEXITCODE -ne 0) {
+  throw "time_attrs.ps1 failed with exit code $LASTEXITCODE"
+}
 
 Run-ScopeScript "crash_before_commit.scope" @(88) | Out-Null
 $before = Run-ScopeScript "check_after_before.scope"

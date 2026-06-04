@@ -1,4 +1,4 @@
-# ScopeFS UI Showcase
+﻿# ScopeFS UI Showcase
 
 The interactive UI now uses a dedicated C++17 ANSI renderer instead of fixed-width ad hoc strings.
 
@@ -36,7 +36,7 @@ Remove-Item Env:\SCOPEFS_WIDTH
 - Startup dashboard: centered logo, command focus panel, and three status cards.
 - `dir`: semantic directory cards with inode/generation/refcount and block mini bars.
 - `scope`: dashboard cards instead of a single tiny table.
-- `trace show`: event timeline with journal/path/auth/snapshot colors.
+- `trace [n]`: event timeline with journal/path/auth/snapshot colors.
 - `map refcount`: colored heatmap with legend and shared-block hotspots.
 - `snapshot diff`: git-like diff with COW marker.
 - `acl show` and `class tree`: grant graph style output.

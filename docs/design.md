@@ -1,4 +1,4 @@
-# ScopeFS Design Notes
+﻿# ScopeFS Design Notes
 
 ## Kernel Boundary
 
@@ -30,7 +30,7 @@ The volume is checkpointed only after `COMMIT`. A crash before commit leaves the
 
 ## Copy-on-Write
 
-Snapshots retain the active root inode. Future writes call `ensureMutablePath`, which clones any shared root or shared path component. Cloned directory inodes retain their children; cloned files retain their data blocks. File writes then replace the writer's block map with newly allocated blocks and decrement old block refcounts. Shared old blocks remain visible through snapshots or clones.
+Snapshots retain the active root inode. Future writes call `ensureMutablePath`, which copies any shared root or shared path component. Copied directory inodes retain their children; copied files retain their data blocks. File writes then replace the writer's block map with newly allocated blocks and decrement old block reference counts. Shared old blocks remain visible through snapshots or `cp` copies.
 
 ## Permission Model
 
@@ -53,5 +53,5 @@ ScopeFS deliberately avoids GUI assumptions. Interactive mode prints a Unicode t
 - `dir` renders inode-rich tables.
 - `scope tree` renders the visible directory tree with inode refs.
 - `map refcount` renders block sharing with `·░▒█`.
-- `trace show` renders recent tracepoints.
+- `trace [n]` renders recent tracepoints, and `trace <command>` renders only that command's kernel trace.
 - `trace replay` reads JSONL and displays events without mutating the mounted file system.

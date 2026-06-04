@@ -88,7 +88,7 @@ class VolumeCoordinator {
   std::filesystem::path sessionPath() const;
 
   void ensureLayout() const;
-  ScopedLock acquireMutex() const;
+  ScopedLock acquireMutex(const std::string& reason) const;
   bool isPidAlive(std::uint64_t pid) const;
   bool isRecordStale(const LockRecord& record) const;
   LockRecord readRecord(const std::filesystem::path& path) const;

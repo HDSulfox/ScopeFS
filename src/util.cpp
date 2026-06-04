@@ -123,6 +123,48 @@ std::string trim(const std::string& text) {
   return text.substr(begin, end - begin + 1);
 }
 
+std::vector<std::string> tokenize(const std::string& line) {
+  std::vector<std::string> out;
+  std::string current;
+  bool quote = false;
+  char quoteChar = 0;
+  bool escape = false;
+  for (char ch : line) {
+    if (escape) {
+      current.push_back(ch);
+      escape = false;
+      continue;
+    }
+    if (ch == '\\') {
+      escape = true;
+      continue;
+    }
+    if (quote) {
+      if (ch == quoteChar) {
+        quote = false;
+      } else {
+        current.push_back(ch);
+      }
+      continue;
+    }
+    if (ch == '"' || ch == '\'') {
+      quote = true;
+      quoteChar = ch;
+      continue;
+    }
+    if (std::isspace(static_cast<unsigned char>(ch))) {
+      if (!current.empty()) {
+        out.push_back(current);
+        current.clear();
+      }
+      continue;
+    }
+    current.push_back(ch);
+  }
+  if (!current.empty()) out.push_back(current);
+  return out;
+}
+
 std::string modeString(int mode, bool directory) {
   std::string out;
   out.push_back(directory ? 'd' : '-');

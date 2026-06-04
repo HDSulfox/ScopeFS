@@ -1,5 +1,5 @@
-login root root
+﻿login root root
 dir /
 fsck
-trace show 12
+trace 12
 exit

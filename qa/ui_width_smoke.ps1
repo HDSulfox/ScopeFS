@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 
 $exe = Join-Path $PSScriptRoot "..\build\scopefs.exe"
 if (!(Test-Path $exe)) {
@@ -10,7 +10,7 @@ format
 login root root
 scope
 dir /
-trace show 4
+trace 4
 map refcount
 theme blue
 scope

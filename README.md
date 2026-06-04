@@ -1,4 +1,4 @@
-# ScopeFS
+﻿# ScopeFS
 
 ScopeFS is a C++17, UNIX-like teaching file system that runs entirely from the terminal. It models multi-user sessions, directories, files, inode/block state, tracepoints, transaction journal recovery, crash injection, Copy-on-Write snapshots, block heatmaps, fsck, and a database-like identity group permission system.
 
@@ -66,7 +66,8 @@ Observation and replay:
 ```text
 trace on
 trace off
-trace show [n]
+trace [n]
+trace <command>
 trace save <file>
 trace replay <file>
 trace step
@@ -101,7 +102,7 @@ snapshot show <name>
 snapshot diff <a> <b>
 snapshot rollback <name>
 snapshot delete <name>
-clone <src> <dst>
+cp <src> <dst>
 class create <class_name>
 class grant <class_name> to <user_or_class> [with grant option] [constraints]
 class revoke <class_name> from <user_or_class>
@@ -137,7 +138,7 @@ The persistent volume is a serialized teaching model, not a byte-for-byte POSIX 
 - block metadata with refcount, checksum, last writer txid, owner inode, and flags
 - physical-style journal records containing before/after transaction images
 - crash recovery that ignores uncommitted transactions and redoes committed transactions
-- Copy-on-Write inode/block sharing for snapshots and clones
+- Copy-on-Write inode/block sharing for snapshots and `cp` copies
 - tracepoint ring buffer and JSONL export/replay
 
 ## QA Scripts

@@ -131,7 +131,7 @@ bool isPathCommand(const std::string& cmd, std::size_t tokenIndex, const std::ve
   static const std::set<std::string> firstPath = {
       "cd", "chdir", "dir", "ls", "mkdir", "rmdir", "create", "open", "delete", "rm", "truncate", "chmod", "chown", "chclass"};
   if (firstPath.count(cmd) && tokenIndex == 1) return true;
-  if (cmd == "clone" && (tokenIndex == 1 || tokenIndex == 2)) return true;
+  if (cmd == "cp" && (tokenIndex == 1 || tokenIndex == 2)) return true;
   if (cmd == "acl" && prior.size() >= 2 && tokenIndex == 2) return true;
   return false;
 }
@@ -141,48 +141,6 @@ bool wantsDirectoryOnly(const std::string& cmd) {
 }
 
 } // namespace
-
-std::vector<std::string> tokenize(const std::string& line) {
-  std::vector<std::string> out;
-  std::string current;
-  bool quote = false;
-  char quoteChar = 0;
-  bool escape = false;
-  for (char ch : line) {
-    if (escape) {
-      current.push_back(ch);
-      escape = false;
-      continue;
-    }
-    if (ch == '\\') {
-      escape = true;
-      continue;
-    }
-    if (quote) {
-      if (ch == quoteChar) {
-        quote = false;
-      } else {
-        current.push_back(ch);
-      }
-      continue;
-    }
-    if (ch == '"' || ch == '\'') {
-      quote = true;
-      quoteChar = ch;
-      continue;
-    }
-    if (std::isspace(static_cast<unsigned char>(ch))) {
-      if (!current.empty()) {
-        out.push_back(current);
-        current.clear();
-      }
-      continue;
-    }
-    current.push_back(ch);
-  }
-  if (!current.empty()) out.push_back(current);
-  return out;
-}
 
 Shell::Shell(FileSystemKernel& kernel) : kernel_(kernel) {}
 
@@ -389,12 +347,12 @@ std::vector<std::string> Shell::completionCandidates(const std::string& line, st
   static const std::vector<std::string> commands = {
       "login", "logout", "whoami", "format", "mkdir", "rmdir", "chdir", "cd", "dir", "ls",
       "create", "open", "read", "write", "close", "delete", "rm", "truncate", "trace", "scope",
-      "map", "snapshot", "clone", "class", "chmod", "chown", "chclass", "acl", "fsck", "crash",
+      "map", "snapshot", "cp", "class", "chmod", "chown", "chclass", "acl", "fsck", "crash",
       "sleep", "theme", "lang", "help", "exit"};
   static const std::map<std::string, std::vector<std::string>> subcommands = {
       {"map", {"blocks", "inode", "journal", "refcount", "owner"}},
       {"scope", {"inode", "block", "journal", "open", "tree"}},
-      {"trace", {"on", "off", "show", "save", "replay", "step", "clear"}},
+      {"trace", {"on", "off", "save", "replay", "step", "clear"}},
       {"snapshot", {"create", "list", "show", "diff", "rollback", "delete"}},
       {"class", {"create", "grant", "revoke", "list", "tree"}},
       {"acl", {"show", "grant", "revoke"}},
