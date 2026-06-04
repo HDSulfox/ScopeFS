@@ -34,6 +34,30 @@ function Assert-True([bool]$Condition, [string]$Message) {
   if (!$Condition) { throw $Message }
 }
 
+function Get-TraceSection([string]$Output, [string]$Command, [string]$NextCommand = "") {
+  $escaped = [regex]::Escape("ScopeFS trace: $Command")
+  if ([string]::IsNullOrEmpty($NextCommand)) {
+    $pattern = "(?s)$escaped(?<body>.*)$"
+  } else {
+    $nextEscaped = [regex]::Escape("ScopeFS trace: $NextCommand")
+    $pattern = "(?s)$escaped(?<body>.*?)(?=$nextEscaped)"
+  }
+  $match = [regex]::Match($Output, $pattern)
+  if (!$match.Success) {
+    throw "trace section not found for $Command"
+  }
+  return $match.Groups["body"].Value
+}
+
+function Trace-HasLine([string]$Trace, [string]$Type, [string]$Object) {
+  foreach ($line in ($Trace -split "\r?\n")) {
+    if ($line.Contains($Type) -and $line.Contains($Object)) {
+      return $true
+    }
+  }
+  return $false
+}
+
 function Decode-Hex([string]$Hex) {
   if ([string]::IsNullOrEmpty($Hex)) { return "" }
   $bytes = New-Object byte[] ($Hex.Length / 2)
@@ -170,5 +194,27 @@ foreach ($block in $copyInode.Blocks) {
   Assert-True ($state.Blocks.ContainsKey($block)) "copy block $block was reclaimed while still referenced"
   Assert-True ($state.Blocks[$block].Refcount -eq 1) "copy block $block refcount expected 1 after deleting source got $($state.Blocks[$block].Refcount)"
 }
+
+Write-Host "== trace delete distinguishes final shared-block reclaim =="
+$traceDelete = Run-ScopeText @"
+format
+lang en
+login root root
+create /a 0644
+open /a rw
+write 3 $data
+close 3
+cp /a /b
+trace delete /a
+trace delete /b
+exit
+"@
+
+$deleteSourceTrace = Get-TraceSection $traceDelete "delete /a" "delete /b"
+$deleteCopyTrace = Get-TraceSection $traceDelete "delete /b"
+Assert-True (Trace-HasLine $deleteSourceTrace "block.release" "file:") "deleting source did not show file block release"
+Assert-True (-not (Trace-HasLine $deleteSourceTrace "block.free" "file:")) "deleting source incorrectly showed final file block reclaim"
+Assert-True (Trace-HasLine $deleteCopyTrace "block.release" "file:") "deleting copy did not show file block release"
+Assert-True (Trace-HasLine $deleteCopyTrace "block.free" "file:") "deleting copy did not show final file block reclaim"
 
 Write-Host "cp COW checks passed."

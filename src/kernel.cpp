@@ -150,6 +150,13 @@ std::string commandTraceObject(const std::string& cmd, const std::vector<std::st
   return cmd;
 }
 
+std::string blockTraceObject(const FsState& state, const BlockInfo& block, const std::string& ownerHint) {
+  auto owner = ownerHint.empty() ? std::string("block") : ownerHint;
+  const auto inodeIt = state.inodes.find(block.ownerInode);
+  if (inodeIt != state.inodes.end()) owner = nodeMarker(inodeIt->second.type);
+  return owner + ":" + std::to_string(block.id);
+}
+
 std::string blockFlagsForId(std::uint32_t block) {
   if (block == config::kSuperBlock) return "super";
   if (block >= config::kBlockMetaStart && block < config::kBlockMetaStart + config::kBlockMetaBlocks) return "refcount";
@@ -1077,7 +1084,7 @@ void FileSystemKernel::releaseInode(std::uint32_t inode, bool recursive) {
       releaseInode(de.inode, true);
     }
   }
-  for (auto b : it->second.blocks) releaseBlock(b);
+  for (auto b : it->second.blocks) releaseBlock(b, nodeMarker(it->second.type));
   state_.freeInodes.insert(inode);
   state_.inodes.erase(it);
   trace_.emit(0, "inode.free", std::to_string(inode), "allocated", "free", "last reference dropped", "ok");
@@ -1090,12 +1097,14 @@ void FileSystemKernel::retainBlock(std::uint32_t block) {
   trace_.emit(0, "block.retain", std::to_string(block), "-", std::to_string(b.refcount), "shared block", "ok");
 }
 
-void FileSystemKernel::releaseBlock(std::uint32_t block) {
+void FileSystemKernel::releaseBlock(std::uint32_t block, const std::string& ownerHint) {
   auto it = state_.blocks.find(block);
   if (it == state_.blocks.end()) return;
+  const auto object = blockTraceObject(state_, it->second, ownerHint);
   if (it->second.refcount > 0) --it->second.refcount;
-  trace_.emit(0, "block.release", std::to_string(block), "-", std::to_string(it->second.refcount), "drop block ref", "ok");
+  trace_.emit(0, "block.release", object, "-", std::to_string(it->second.refcount), "drop block ref", "ok");
   if (it->second.refcount == 0 && block >= config::kDataStart) {
+    trace_.emit(0, "block.free", object, "ref=0", "free", "last block reference dropped", "ok");
     state_.freeBlocks.insert(block);
     state_.blocks.erase(it);
   }
@@ -1120,7 +1129,7 @@ void FileSystemKernel::setFileData(Inode& inode, const std::string& data, std::u
   }
   const auto oldBlocks = inode.blocks;
   inode.blocks.clear();
-  for (auto b : oldBlocks) releaseBlock(b);
+  for (auto b : oldBlocks) releaseBlock(b, "file");
   std::size_t pos = 0;
   while (pos < data.size() || (data.empty() && pos == 0)) {
     const auto chunk = data.substr(pos, config::kBlockSize);

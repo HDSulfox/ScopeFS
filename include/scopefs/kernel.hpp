@@ -137,7 +137,7 @@ class FileSystemKernel {
   void retainInode(std::uint32_t inode);
   void releaseInode(std::uint32_t inode, bool recursive);
   void retainBlock(std::uint32_t block);
-  void releaseBlock(std::uint32_t block);
+  void releaseBlock(std::uint32_t block, const std::string& ownerHint = "");
   std::string readFileData(const Inode& inode) const;
   void setFileData(Inode& inode, const std::string& data, std::uint64_t txid, bool touchModified = true);
   void refreshDirBlock(Inode& inode, std::uint64_t txid, bool touchModified = true);
