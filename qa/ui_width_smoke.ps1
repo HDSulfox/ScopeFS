@@ -81,6 +81,27 @@ function Assert-ProjectBoxAligned([string]$Output, [int]$Width) {
   }
 }
 
+function Run-InteractiveText([string]$Text) {
+  $psi = [System.Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = (Resolve-Path $exe).Path
+  $psi.UseShellExecute = $false
+  $psi.RedirectStandardInput = $true
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  $proc = [System.Diagnostics.Process]::Start($psi)
+  $proc.StandardInput.Write($Text)
+  $proc.StandardInput.Close()
+  $stdout = $proc.StandardOutput.ReadToEnd()
+  $stderr = $proc.StandardError.ReadToEnd()
+  $proc.WaitForExit()
+  if ($proc.ExitCode -ne 0) {
+    Write-Host $stdout
+    Write-Host $stderr
+    throw "interactive run failed with exit code $($proc.ExitCode)"
+  }
+  return $stdout
+}
+
 foreach ($width in @(88, 120, 160)) {
   Write-Host "== interactive width $width =="
   $env:SCOPEFS_WIDTH = "$width"
@@ -118,23 +139,7 @@ login root root
 trace create 1.txt
 exit
 "@
-$psi = [System.Diagnostics.ProcessStartInfo]::new()
-$psi.FileName = (Resolve-Path $exe).Path
-$psi.UseShellExecute = $false
-$psi.RedirectStandardInput = $true
-$psi.RedirectStandardOutput = $true
-$psi.RedirectStandardError = $true
-$proc = [System.Diagnostics.Process]::Start($psi)
-$proc.StandardInput.Write($traceCommands)
-$proc.StandardInput.Close()
-$traceStdout = $proc.StandardOutput.ReadToEnd()
-$traceStderr = $proc.StandardError.ReadToEnd()
-$proc.WaitForExit()
-if ($proc.ExitCode -ne 0) {
-  Write-Host $traceStdout
-  Write-Host $traceStderr
-  throw "interactive trace command run failed with exit code $($proc.ExitCode)"
-}
+$traceStdout = Run-InteractiveText $traceCommands
 $tracePlain = Remove-Ansi $traceStdout
 Assert-True ($tracePlain -notmatch "跟踪时间线 / create 1\.txt") "trace command title still included command suffix in zh"
 Assert-True ($tracePlain -notmatch "Trace timeline / create 1\.txt") "trace command title still included command suffix in en"
@@ -149,6 +154,26 @@ foreach ($line in $traceLines) {
 }
 Assert-True (![string]::IsNullOrWhiteSpace($firstTraceEvent)) "trace command first event line was missing"
 Assert-True ($firstTraceEvent -notmatch "事务#\d+" -and $firstTraceEvent -notmatch "transaction#\d+") "trace command root event still claimed a transaction before journal.begin"
+
+Write-Host "== zh trace delete block-free labels =="
+$traceDeleteCommands = @"
+format
+lang zh
+login root root
+create /a 0644
+open /a rw
+write 3 shared-data
+close 3
+cp /a /b
+trace delete /a
+trace delete /b
+exit
+"@
+$traceDeleteStdout = Run-InteractiveText $traceDeleteCommands
+$traceDeletePlain = Remove-Ansi $traceDeleteStdout
+Assert-True ($traceDeletePlain -match "回收数据块 文件:\d+") "zh trace delete did not localize final file block reclaim"
+Assert-True ($traceDeletePlain -notmatch "block free") "zh trace delete still showed raw block.free label"
+Assert-True ($traceDeletePlain -notmatch "回收数据块 目录:\d+") "zh trace delete incorrectly showed directory block reclaim"
 
 Remove-Item Env:\SCOPEFS_WIDTH -ErrorAction SilentlyContinue
 Write-Host "UI width smoke checks passed."

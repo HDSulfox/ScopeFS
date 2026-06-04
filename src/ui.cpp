@@ -193,6 +193,7 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"block.alloc", "分配数据块"},
       {"block.retain", "保留块引用"},
       {"block.release", "释放块引用"},
+      {"block.free", "回收数据块"},
       {"journal.begin", "事务开始"},
       {"journal.record", "记录事务镜像"},
       {"journal.record.write", "写入日志记录"},
@@ -272,6 +273,7 @@ std::string traceTypeLabel(const Theme& th, const std::string& type) {
       {"block.alloc", "allocate data block"},
       {"block.retain", "retain block ref"},
       {"block.release", "release block ref"},
+      {"block.free", "free data block"},
       {"journal.begin", "begin transaction"},
       {"journal.record", "record transaction image"},
       {"journal.record.write", "write journal record"},
@@ -372,6 +374,24 @@ std::string traceObjectLabel(const Theme& th, const std::string& object) {
   const auto& map = th.lang == "zh" ? zhMap : enMap;
   const auto it = map.find(object);
   if (it != map.end()) return it->second;
+  const auto colon = object.find(':');
+  if (colon != std::string::npos && colon > 0 && colon + 1 < object.size()) {
+    static const std::map<std::string, std::string> zhPrefixMap = {
+        {"file", "文件"},
+        {"dir", "目录"},
+        {"snap", "快照"},
+        {"group", "组对象"}};
+    static const std::map<std::string, std::string> enPrefixMap = {
+        {"file", "file"},
+        {"dir", "dir"},
+        {"snap", "snap"},
+        {"group", "group"}};
+    const auto prefix = object.substr(0, colon);
+    const auto suffix = object.substr(colon + 1);
+    const auto& prefixMap = th.lang == "zh" ? zhPrefixMap : enPrefixMap;
+    const auto prefixIt = prefixMap.find(prefix);
+    if (prefixIt != prefixMap.end()) return prefixIt->second + ":" + suffix;
+  }
   return object;
 }
 

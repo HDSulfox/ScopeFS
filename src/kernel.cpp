@@ -1101,10 +1101,17 @@ void FileSystemKernel::releaseBlock(std::uint32_t block, const std::string& owne
   auto it = state_.blocks.find(block);
   if (it == state_.blocks.end()) return;
   const auto object = blockTraceObject(state_, it->second, ownerHint);
+  bool fileBlock = ownerHint == "file";
+  if (!fileBlock) {
+    const auto inodeIt = state_.inodes.find(it->second.ownerInode);
+    fileBlock = inodeIt != state_.inodes.end() && inodeIt->second.type == NodeType::Regular;
+  }
   if (it->second.refcount > 0) --it->second.refcount;
   trace_.emit(0, "block.release", object, "-", std::to_string(it->second.refcount), "drop block ref", "ok");
-  if (it->second.refcount == 0 && block >= config::kDataStart) {
+  if (it->second.refcount == 0 && block >= config::kDataStart && fileBlock) {
     trace_.emit(0, "block.free", object, "ref=0", "free", "last block reference dropped", "ok");
+  }
+  if (it->second.refcount == 0 && block >= config::kDataStart) {
     state_.freeBlocks.insert(block);
     state_.blocks.erase(it);
   }
@@ -1129,7 +1136,7 @@ void FileSystemKernel::setFileData(Inode& inode, const std::string& data, std::u
   }
   const auto oldBlocks = inode.blocks;
   inode.blocks.clear();
-  for (auto b : oldBlocks) releaseBlock(b, "file");
+  for (auto b : oldBlocks) releaseBlock(b, nodeMarker(inode.type));
   std::size_t pos = 0;
   while (pos < data.size() || (data.empty() && pos == 0)) {
     const auto chunk = data.substr(pos, config::kBlockSize);
